@@ -19,7 +19,6 @@ for agents         and context           before merge          at scale
 | Layer | Project | Status |
 |-------|---------|--------|
 | **Prepare** | [agent-ready](https://github.com/agent-next/agent-ready) — Readiness scanner (9 Pillars / 5 Levels) | [![npm](https://img.shields.io/npm/v/agent-ready)](https://www.npmjs.com/package/agent-ready) |
-| **Prepare** | [agent-ready.org](https://agent-ready.org) — Interactive portal & hosted API | Live |
 | **Verify** | [behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing) — BDD framework for agent behavior | [![skill](https://img.shields.io/badge/Claude_Code-skill-blue)](https://skills.sh/agent-next/behavior-driven-testing/behavior-driven-testing) |
 | **Equip** | agent-skills — Composable skill library for coding agents | Coming soon |
 | **Ship** | agent-contracts — Delivery verification & certification | Planned |
