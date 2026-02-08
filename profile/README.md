@@ -1,4 +1,4 @@
-# agent-next
+# Agent Next
 
 **Infrastructure for deliverable AI agents.**
 
