@@ -1,43 +1,44 @@
 # Agent Next
 
-**Infrastructure for deliverable AI agents.**
+**自治产品研发团队，不只是更多代码。**
 
-Today's AI agents can chat. Tomorrow's will ship. We're building the missing infrastructure layer — the standards, tools, and runtime that turn AI agents from demos into reliable delivery systems.
+我们在构建可规模化的自治产品研发团队，替代个人开发者、初创团队和大企业的传统 R&D。底座是 proof-first 质量验证流水线，上层是可大规模扩展的多 agent 协作系统，持续交付可维护的产品。
 
-## The Problem
+> We're building a scalable autonomous product engineering team. Our foundation is a **proof-first QA pipeline** (acceptance + regression + evidence), powered by a **massively scalable multi-agent system** that delivers maintainable products end-to-end.
 
-AI agents fail in production because codebases aren't built for them and there's no way to verify what agents actually deliver. agent-next closes both gaps.
-
-## What We're Building
+## Architecture
 
 ```
-Prepare           →  Equip             →  Verify            →  Ship
-Code ready         Agent has skills      Behavior validated    Reliable delivery
-for agents         and context           before merge          at scale
+ ╔══════════════════════════════════════════════╗
+ ║  Maintainable Products (not just more code)  ║
+ ╠══════════════════════════════════════════════╣
+ ║  Multi-Agent Collaboration                   ║
+ ║  Scalable orchestration · E2E delivery       ║
+ ╠══════════════════════════════════════════════╣
+ ║  Proof-First QA Pipeline          ← 底座     ║
+ ║  Acceptance · Regression · Evidence          ║
+ ╠══════════════════════════════════════════════╣
+ ║  Codebase Operability             ← 入口     ║
+ ║  Agent-readable · Testable · Structured      ║
+ ╚══════════════════════════════════════════════╝
 ```
 
-| Layer | Project | Status |
-|-------|---------|--------|
-| **Prepare** | [agent-ready](https://github.com/agent-next/agent-ready) — Readiness scanner (9 Pillars / 5 Levels) | [![npm](https://img.shields.io/npm/v/agent-ready)](https://www.npmjs.com/package/agent-ready) |
-| **Verify** | [behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing) — BDD framework for agent behavior | [![skill](https://img.shields.io/badge/Claude_Code-skill-blue)](https://skills.sh/agent-next/behavior-driven-testing/behavior-driven-testing) |
-| **Equip** | agent-skills — Composable skill library for coding agents | Coming soon |
-| **Ship** | agent-contracts — Delivery verification & certification | Planned |
+## Projects
 
-## Why It Matters
+| Layer | Project | Role |
+|-------|---------|------|
+| 入口 | [agent-ready](https://github.com/agent-next/agent-ready) | 代码库就绪度扫描 — 确保 agent 能接管你的 repo |
+| 底座 | [behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing) | Proof-first 验证框架 — 验收、回归、证据链 |
+| 协作 | multi-agent orchestration | 多 agent 端到端交付系统 |
 
-- **For developers**: Know exactly what to fix so agents can work in your repo
-- **For teams**: Validate agent output with the same rigor as human PRs
-- **For the ecosystem**: A shared standard for what "agent-ready" means
+## Who It's For
 
-## Get Started
-
-```bash
-# Check if your repo is ready for AI agents
-npx agent-ready scan .
-```
+- **Solo founders**: 一个人 + agent 团队 = 完整研发能力
+- **Startups**: 用 agent 团队扩展产能，不用扩招
+- **Enterprises**: 标准化的自治研发单元，可审计、可验证
 
 ## Get Involved
 
-- [Contributing](https://github.com/agent-next/.github/blob/main/CONTRIBUTING.md) · [Security](https://github.com/agent-next/.github/blob/main/SECURITY.md) · [Discussions](https://github.com/agent-next/agent-ready/discussions)
+[Contributing](https://github.com/agent-next/.github/blob/main/CONTRIBUTING.md) · [Security](https://github.com/agent-next/.github/blob/main/SECURITY.md) · [Discussions](https://github.com/agent-next/agent-ready/discussions)
 
 **Maintainer**: [@robotlearning123](https://github.com/robotlearning123)
