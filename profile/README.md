@@ -1,41 +1,41 @@
 # Agent Next
 
-**自治产品研发团队，不只是更多代码。**
+**Open-source tools for proof-first autonomous software delivery.**
 
-我们在构建可规模化的自治产品研发团队，替代个人开发者、初创团队和大企业的传统 R&D。底座是 proof-first 质量验证流水线，上层是可大规模扩展的多 agent 协作系统，持续交付可维护的产品。
+AI agents that ship code without verification ship bugs at scale. We build the open-source standards, verification frameworks, and orchestration primitives that make autonomous delivery trustworthy.
 
-> We're building a scalable autonomous product engineering team. Our foundation is a **proof-first QA pipeline** (acceptance + regression + evidence), powered by a **massively scalable multi-agent system** that delivers maintainable products end-to-end.
-
-## Architecture
+## What We Build
 
 ```
- ╔══════════════════════════════════════════════╗
- ║  Maintainable Products (not just more code)  ║
- ╠══════════════════════════════════════════════╣
- ║  Multi-Agent Collaboration                   ║
- ║  Scalable orchestration · E2E delivery       ║
- ╠══════════════════════════════════════════════╣
- ║  Proof-First QA Pipeline          ← 底座     ║
- ║  Acceptance · Regression · Evidence          ║
- ╠══════════════════════════════════════════════╣
- ║  Codebase Operability             ← 入口     ║
- ║  Agent-readable · Testable · Structured      ║
- ╚══════════════════════════════════════════════╝
+ ┌───────────────────────────────────────┐
+ │  Multi-Agent Orchestration            │  Scalable collaboration primitives
+ ├───────────────────────────────────────┤
+ │  Proof-First Verification    ← core  │  Acceptance · Regression · Evidence
+ ├───────────────────────────────────────┤
+ │  Codebase Operability                 │  Standards for agent-readable repos
+ └───────────────────────────────────────┘
 ```
 
-## Projects
+| Layer | Project | |
+|-------|---------|---|
+| Operability | [agent-ready](https://github.com/agent-next/agent-ready) — Readiness scanner, 9 Pillars / 5 Levels | [![npm](https://img.shields.io/npm/v/agent-ready)](https://www.npmjs.com/package/agent-ready) |
+| Verification | [behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing) — Proof-first BDD for agent output | [![skill](https://img.shields.io/badge/Claude_Code-skill-blue)](https://skills.sh/agent-next/behavior-driven-testing/behavior-driven-testing) |
+| Orchestration | Multi-agent coordination primitives | In development |
 
-| Layer | Project | Role |
-|-------|---------|------|
-| 入口 | [agent-ready](https://github.com/agent-next/agent-ready) | 代码库就绪度扫描 — 确保 agent 能接管你的 repo |
-| 底座 | [behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing) | Proof-first 验证框架 — 验收、回归、证据链 |
-| 协作 | multi-agent orchestration | 多 agent 端到端交付系统 |
+## Core Idea
 
-## Who It's For
+Agent output is untrusted until proven correct. Every delivery needs:
+- **Acceptance proof** — does it meet the spec?
+- **Regression proof** — does it break anything?
+- **Evidence trail** — what was tested, how, and by whom?
 
-- **Solo founders**: 一个人 + agent 团队 = 完整研发能力
-- **Startups**: 用 agent 团队扩展产能，不用扩招
-- **Enterprises**: 标准化的自治研发单元，可审计、可验证
+This is the "proof-first" principle that runs through everything we build.
+
+## Get Started
+
+```bash
+npx agent-ready scan .
+```
 
 ## Get Involved
 
