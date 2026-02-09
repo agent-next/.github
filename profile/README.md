@@ -1,4 +1,4 @@
-# agent-next
+# Agent Next
 
 **Infrastructure for deliverable AI agents.**
 
@@ -29,13 +29,6 @@ for agents         and context           before merge          at scale
 - **For developers**: Know exactly what to fix so agents can work in your repo
 - **For teams**: Validate agent output with the same rigor as human PRs
 - **For the ecosystem**: A shared standard for what "agent-ready" means
-
-## Get Started
-
-```bash
-# Check if your repo is ready for AI agents
-npx agent-ready scan .
-```
 
 ## Get Involved
 
