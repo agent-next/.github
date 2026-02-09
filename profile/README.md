@@ -30,15 +30,3 @@ Agent output is untrusted until proven correct. Every delivery needs:
 - **Evidence trail** — what was tested, how, and by whom?
 
 This is the "proof-first" principle that runs through everything we build.
-
-## Get Started
-
-```bash
-npx agent-ready scan .
-```
-
-## Get Involved
-
-[Contributing](https://github.com/agent-next/.github/blob/main/CONTRIBUTING.md) · [Security](https://github.com/agent-next/.github/blob/main/SECURITY.md) · [Discussions](https://github.com/agent-next/agent-ready/discussions)
-
-**Maintainer**: [@robotlearning123](https://github.com/robotlearning123)
