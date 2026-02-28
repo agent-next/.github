@@ -7,6 +7,7 @@
 - [ ] agent-ready v1 stable — 9 Pillars / 5 Levels finalized
 - [ ] behavior-driven-testing — docs, examples, CI
 - [ ] cc-manager hardening and API stabilization
+- [ ] cc-manager open-source launch (license/docs/security baseline + first public release)
 - [ ] Scan 10+ well-known open-source repos publicly
 - [ ] Dependency/security backlog burn-down (Dependabot + alerts)
 - [ ] Community launch (Discord + contributor onboarding)
