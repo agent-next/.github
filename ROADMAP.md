@@ -6,8 +6,10 @@
 
 - [ ] agent-ready v1 stable — 9 Pillars / 5 Levels finalized
 - [ ] behavior-driven-testing — docs, examples, CI
+- [ ] cc-manager hardening and API stabilization
 - [ ] Scan 10+ well-known open-source repos publicly
-- [ ] Discord community
+- [ ] Dependency/security backlog burn-down (Dependabot + alerts)
+- [ ] Community launch (Discord + contributor onboarding)
 
 ## Next
 
@@ -15,6 +17,7 @@
 - [ ] Proof-first verification spec
 - [ ] Multi-language support (Python, Go, Rust)
 - [ ] Badge program — repos display their agent-ready level
+- [ ] Organization baseline workflow standards (CI + release + security)
 
 ## Later
 

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Report
+    url: https://github.com/orgs/agent-next/security/advisories/new
+    about: Report vulnerabilities privately through GitHub Security Advisories.
+  - name: Community Discussions
+    url: https://github.com/agent-next/agent-ready/discussions
+    about: Ask questions, share ideas, and discuss roadmap proposals.
