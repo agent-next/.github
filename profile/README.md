@@ -20,7 +20,7 @@ AI agents that ship code without verification ship bugs at scale. We build the o
 |-------|---------|---|
 | Operability | [agent-ready](https://github.com/agent-next/agent-ready) — Readiness scanner, 9 Pillars / 5 Levels | [![npm](https://img.shields.io/npm/v/agent-ready)](https://www.npmjs.com/package/agent-ready) |
 | Verification | [behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing) — Proof-first BDD for agent output | [![skill](https://img.shields.io/badge/Claude_Code-skill-blue)](https://skills.sh/agent-next/behavior-driven-testing/behavior-driven-testing) |
-| Orchestration | [cc-manager](https://github.com/agent-next/cc-manager) — Multi-agent orchestration in isolated git worktrees | Core capability · Open-source launch in progress |
+| Orchestration | [cc-manager](https://github.com/agent-next/cc-manager) — Multi-agent orchestration in isolated git worktrees | Open-source launch in progress |
 
 ## Core Idea
 
