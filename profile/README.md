@@ -22,6 +22,7 @@ We explore the core capabilities that define the next generation of AI agents: *
 ## Ecosystem
 
 - **[LabClaw](https://labclaw.org)** — AI-native scientific lab platform. First vertical application of Agent Next infrastructure, proving autonomous agent teams in experimental science.
+- **[polymarket-paper-trader](https://github.com/agent-next/polymarket-paper-trader)** — Prediction market trading for AI agents. Paper trading with live order books, strategy backtesting, MCP server. Compete on the [leaderboard](https://github.com/agent-next/polymarket-leaderboard).
 
 ## Thesis
 
