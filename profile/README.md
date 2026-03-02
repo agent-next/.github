@@ -8,15 +8,14 @@ We explore the core capabilities that define the next generation of AI agents: *
 
 | Direction | Question | Project |
 |-----------|----------|---------|
-| **Self-Organizing** | How do agent teams decompose work, coordinate, and resolve conflicts autonomously? | [cc-manager](https://github.com/agent-next/cc-manager) |
-| **Self-Verifying** | How can agent output prove its own correctness without human review? | [behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing) |
-| **Self-Evolving** | How do agent systems improve from their own execution history? | [cc-manager evolution pipeline](https://github.com/agent-next/cc-manager) |
+| **Self-Organizing** | How do agent teams decompose work, coordinate, and resolve conflicts autonomously? | [cc-manager](https://github.com/agent-next/cc-manager), [TeamClaw](https://github.com/agent-next/teamclaw) |
+| **Self-Verifying** | How can agent output prove its own correctness without human review? | [agent-ready](https://github.com/agent-next/agent-ready) |
+| **Self-Evolving** | How do agent systems improve from their own execution history? | [cc-manager](https://github.com/agent-next/cc-manager) |
 
 ## Open Source Projects
 
 - **[cc-manager](https://github.com/agent-next/cc-manager)** — Research platform for autonomous agent orchestration. Parallel agents in git worktrees, self-evolution from execution data, proof-first merge pipeline.
-- **[agent-ready](https://github.com/agent-next/agent-ready)** — Codebase readiness scoring for autonomous agents. Beyond instructions — measurable operability standards.
-- **[behavior-driven-testing](https://github.com/agent-next/behavior-driven-testing)** — Verification discipline for agent-generated changes. Acceptance proof, regression safety, evidence trails.
+- **[agent-ready](https://github.com/agent-next/agent-ready)** — Codebase readiness scoring and verification discipline for autonomous agents. Measurable operability standards, acceptance proof, regression safety.
 - **[TeamClaw](https://github.com/agent-next/teamclaw)** — Multi-agent team platform for cross-project coordination with shared memory and role-based access.
 
 ## Ecosystem
