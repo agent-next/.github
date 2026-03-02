@@ -29,6 +29,6 @@ Current-generation agents follow instructions. Next-generation agents learn, ver
 
 ## Links
 
-[Website](https://agent-next.com) · [Roadmap](https://github.com/agent-next/.github/blob/main/ROADMAP.md) · [Contributing](https://github.com/agent-next/.github/blob/main/CONTRIBUTING.md)
+[Website](https://agent-next.com) · [Blog](https://agent-next.com/blog/) · [Roadmap](https://github.com/agent-next/.github/blob/main/ROADMAP.md) · [Contributing](https://github.com/agent-next/.github/blob/main/CONTRIBUTING.md)
 
 Maintainer: [@robotlearning123](https://github.com/robotlearning123)
