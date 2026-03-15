@@ -14,6 +14,7 @@ We explore the core capabilities that define the next generation of AI agents: *
 
 ## Open Source Projects
 
+- **[call-use](https://github.com/agent-next/call-use)** — Give your AI agent the ability to make phone calls. Outbound call-control runtime with SDK, CLI, MCP Server, and REST API. [`pip install call-use`](https://pypi.org/project/call-use/)
 - **[cc-manager](https://github.com/agent-next/cc-manager)** — Research platform for autonomous agent orchestration. Parallel agents in git worktrees, self-evolution from execution data, proof-first merge pipeline.
 - **[agent-ready](https://github.com/agent-next/agent-ready)** — Codebase readiness scoring and verification discipline for autonomous agents. Measurable operability standards, acceptance proof, regression safety.
 - **[TeamClaw](https://github.com/agent-next/teamclaw)** — Multi-agent team platform for cross-project coordination with shared memory and role-based access.
