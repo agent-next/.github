@@ -5,9 +5,7 @@
 ## Now
 
 - [ ] agent-ready v1 stable — 9 Pillars / 5 Levels finalized
-- [ ] behavior-driven-testing — docs, examples, CI
-- [ ] cc-manager hardening and API stabilization
-- [ ] cc-manager open-source launch (license/docs/security baseline + first public release)
+- [ ] agent-factory — first receipted end-to-end thread green, then public core
 - [ ] Scan 10+ well-known open-source repos publicly
 - [ ] Dependency/security backlog burn-down (Dependabot + alerts)
 - [ ] Community launch (Discord + contributor onboarding)
@@ -22,7 +20,7 @@
 
 ## Later
 
-- [ ] Multi-agent orchestration primitives
+- [ ] Multi-project / team coordination layer (roles, shared memory, cross-repo routing)
 - [ ] Plugin system for custom checks
 - [ ] IDE + CI platform integrations
 - [ ] Formal governance (RFC process)

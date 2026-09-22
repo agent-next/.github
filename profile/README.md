@@ -8,15 +8,15 @@ We explore the core capabilities that define the next generation of AI agents: *
 
 | Direction | Question | Project |
 |-----------|----------|---------|
-| **Self-Organizing** | How do agent teams decompose work, coordinate, and resolve conflicts autonomously? | [cc-manager](https://github.com/agent-next/cc-manager), [TeamClaw](https://github.com/agent-next/teamclaw) |
+| **Self-Organizing** | How do agent teams decompose work, coordinate, and resolve conflicts autonomously? | agent-factory *(in development)* |
 | **Self-Verifying** | How can agent output prove its own correctness without human review? | [agent-ready](https://github.com/agent-next/agent-ready) |
-| **Self-Evolving** | How do agent systems improve from their own execution history? | [cc-manager](https://github.com/agent-next/cc-manager) |
+| **Self-Evolving** | How do agent systems improve from their own execution history? | agent-factory *(in development)* |
 
 ## Open Source Projects
 
-- **[cc-manager](https://github.com/agent-next/cc-manager)** — Research platform for autonomous agent orchestration. Parallel agents in git worktrees, self-evolution from execution data, proof-first merge pipeline.
+- **agent-factory** — Receipt-governed agent-fleet orchestrator. Completion is authorized only by an execution-grounded, tamper-evident receipt, never by a status flag. Successor to cc-manager *(in development)*.
 - **[agent-ready](https://github.com/agent-next/agent-ready)** — Codebase readiness scoring and verification discipline for autonomous agents. Measurable operability standards, acceptance proof, regression safety.
-- **[TeamClaw](https://github.com/agent-next/teamclaw)** — Multi-agent team platform for cross-project coordination with shared memory and role-based access.
+- **[cc-manager](https://github.com/agent-next/cc-manager)** *(archived)* — Predecessor orchestration platform; superseded by agent-factory.
 
 ## Ecosystem
 
