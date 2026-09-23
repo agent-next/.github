@@ -15,6 +15,7 @@ We test these ideas in open tools and focused applications. A completed run is n
 ## Selected public work
 
 - **[agent-ready](https://github.com/agent-next/agent-ready):** Tools for assessing whether a codebase is ready for agent work and making verification part of the workflow.
+- **[call-use](https://github.com/agent-next/call-use):** An early-release outbound call-control runtime for agents, with SDK, CLI, MCP, and REST interfaces. [PyPI](https://pypi.org/project/call-use/).
 - **[polymarket-paper-trader](https://github.com/agent-next/polymarket-paper-trader):** A paper-trading environment for testing agent decisions against market data. It is a simulation, not a live trading record.
 
 ## Explore
