@@ -1,30 +1,17 @@
-# Roadmap
+# Current direction
 
-> Untrusted until proven.
+This is a working direction, not a release schedule. We update it as experiments and user needs change.
 
-## Now
+## Establish the baseline
 
-- [ ] agent-ready v1 stable — 9 Pillars / 5 Levels finalized
-- [ ] agent-factory — first receipted end-to-end thread green, then public core
-- [ ] Scan 10+ well-known open-source repos publicly
-- [ ] Dependency/security backlog burn-down (Dependabot + alerts)
-- [ ] Community launch (Discord + contributor onboarding)
+- Make agent work measurable at the task level: outcome, evidence, time, token cost, and human effort.
+- Improve the checks and guidance in [agent-ready](https://github.com/agent-next/agent-ready), and test them on varied repositories.
+- Keep public examples aligned with what their source and results actually demonstrate.
 
-## Next
+## Build on the baseline
 
-- [ ] agent-ready GitHub Action — scan in CI, post to PRs
-- [ ] Proof-first verification spec
-- [ ] Multi-language support (Python, Go, Rust)
-- [ ] Badge program — repos display their agent-ready level
-- [ ] Organization baseline workflow standards (CI + release + security)
+- Test coordination and recoverable handoffs across longer tasks and more than one agent.
+- Connect verification and feedback to those workflows so failures can guide the next run.
+- Explore focused applications where a useful outcome has a clear domain-specific test.
 
-## Later
-
-- [ ] Multi-project / team coordination layer (roles, shared memory, cross-repo routing)
-- [ ] Plugin system for custom checks
-- [ ] IDE + CI platform integrations
-- [ ] Formal governance (RFC process)
-
----
-
-[Suggest changes](https://github.com/agent-next/agent-ready/discussions)
+[Explore the work](https://github.com/agent-next) · [Suggest changes](https://github.com/agent-next/agent-ready/discussions)
