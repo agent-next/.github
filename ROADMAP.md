@@ -5,7 +5,7 @@ This is a working direction, not a release schedule. We update it as experiments
 ## Establish the baseline
 
 - Make agent work measurable at the task level: outcome, evidence, time, token cost, and human effort.
-- Improve the checks and guidance in [agent-ready](https://github.com/agent-next/agent-ready), and test them on varied repositories.
+- Improve the checks we run on agent work, and test them on varied tasks.
 - Keep public examples aligned with what their source and results actually demonstrate.
 
 ## Build on the baseline
@@ -14,4 +14,4 @@ This is a working direction, not a release schedule. We update it as experiments
 - Connect verification and feedback to those workflows so failures can guide the next run.
 - Explore focused applications where a useful outcome has a clear domain-specific test.
 
-[Explore the work](https://github.com/agent-next) · [Suggest changes](https://github.com/agent-next/agent-ready/discussions)
+[Explore the work](https://github.com/agent-next)

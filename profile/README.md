@@ -10,13 +10,16 @@ Tokens and agents could power a new industrial era. Turning model capability int
 - **Verify:** Check results against the task, with evidence people can inspect and boundaries they control.
 - **Improve:** Use outcomes, failures, cost, and human effort to improve the next run.
 
-We test these ideas in open tools and focused applications. A completed run is not the same as a successful outcome, and each domain has its own standard for a useful result.
+## What we are working on
 
-## Selected public work
+- **Small models for agent work:** fine-tuning small open models on the tasks agents actually do.
+- **Verified math:** agent teams that solve math problems and verify their answers.
+- **Efficient inference:** serving open models on our own GPUs at the lowest cost per token.
+- **One gateway for agent fleets:** a single access point to many models, with usage, cost, and limits per team.
 
-- **[agent-ready](https://github.com/agent-next/agent-ready):** Tools for assessing whether a codebase is ready for agent work and making verification part of the workflow.
-- **[call-use](https://github.com/agent-next/call-use):** An early-release outbound call-control runtime for agents, with SDK, CLI, MCP, and REST interfaces. [PyPI](https://pypi.org/project/call-use/).
-- **[polymarket-paper-trader](https://github.com/agent-next/polymarket-paper-trader):** A paper-trading environment for testing agent decisions against market data. It is a simulation, not a live trading record.
+## Public work
+
+- **[zagent](https://github.com/agent-next/zagent):** An unofficial, GLM-native terminal coding agent. Early release.
 
 ## Explore
 
