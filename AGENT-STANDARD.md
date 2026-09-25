@@ -1,4 +1,4 @@
-# agent-next agent standard — v0.1.0
+# agent-next agent standard — v0.2.0
 
 ## Scope
 
@@ -6,6 +6,15 @@ This standard applies to every repository in github.com/agent-next, public and p
 Each repo keeps its own `AGENTS.md` for repo-specific facts (purpose, setup, boundaries);
 that file links here and never copies the hard limits below. If a repo file conflicts with
 this standard, this standard wins unless the owner says otherwise in writing.
+
+## Operating model
+
+- Agent-native first: agents discover, set up, change, verify, review, and merge the work end to end,
+  headless. A step that needs a person to click or approve is a defect to remove, not a gate to keep.
+- People are on the loop, not in it: they set direction, watch receipts and reports, give feedback,
+  and decide the owner-gated actions listed under Hard limits. Nothing else waits for a person.
+- Every PR, branch, worktree, and issue is handled as its own item with its own agent review.
+  Never batch unrelated items into one review, merge, or cleanup.
 
 ## Hard limits
 
@@ -27,17 +36,22 @@ These apply even under elevated-permission modes:
   need no secrets, no paid APIs, and no GPU.
 - Receipts: claims in a PR body are backed by real commands and their real output,
   pasted in the PR body. A claim without a receipt is a draft.
+- Clean your own work in time: temp files, scratch branches, clones, and stale worktrees you
+  created are removed as soon as they stop being useful. Clean only what you created.
 
-## Merge policy
+## Merge policy (agent-native gate)
 
-- Non-trivial diffs get independent review before merge.
-- Checking CI and merging are separate steps: confirm every check is green, then merge.
-  Merge only when every required check is green.
-- Use `gh-safe-merge` from the owner's config repo when available; it enforces the
-  green-checks gate before merging.
-- The org is on the GitHub free plan: private repos have no server-side branch
-  protection. This policy is enforced by agents and by a local pre-push hook that
-  blocks direct pushes to main/master.
+- There is no human approval step. The gate on every default branch is: pull request, every
+  required CI check green, and the commit status `agent-review` = success on the PR's current
+  head commit.
+- `agent-review` is posted only by an independent reviewer agent from a different model family
+  than the writer, after reviewing that exact head commit file by file
+  (`scripts/agent-review.sh`). A new push creates a new head with no status, so a stale review
+  never counts.
+- Writer, reviewer, and merger are separate roles. The merger checks the gate and merges that
+  exact head (`scripts/agent-merge.sh`); it never reviews its own work.
+- The gate is declared server-side (org ruleset plus per-repo required CI checks), not by
+  convention. Changing it is an owner-gated action.
 
 ## Repo baseline (v0.1.0)
 
