@@ -3,16 +3,18 @@
 # commit status `agent-review` on that SHA (the agent-native merge gate; no human approval).
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
+# tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
 # Reviewer chain: grok -> agy -> devin -> gpt6pro (AGENT_REVIEWER overrides the order); a lane of the writer's model family (AGENT_WRITER_FAMILY) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
 OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
 HEAD=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
-WORK=$(mktemp -d); STATE=none   # none -> pending -> final
+WORK=$(mktemp -d); STATE=none   # none -> pending -> final (final = a terminal status was posted)
+ABORT="review aborted before a verdict (see runner log)"
 # never leave a stale pending status: an abort after "pending" is recorded as error on the head
-cleanup(){ [ "$STATE" != pending ] || status error "review aborted before a verdict (see runner log)" || true; rm -rf "$WORK"; }
-trap cleanup EXIT
+cleanup(){ [ "$STATE" != pending ] || status error "$ABORT" || true; rm -rf "$WORK"; }
+trap cleanup EXIT   # bash also runs this on SIGTERM/SIGINT (verified, bash 5.2)
 REC="$OUT/$(echo "$R" | tr / _)-pr$PR-${HEAD:0:7}.md"
 
 status(){ [ "$POST" = --post ] || return 0
@@ -24,7 +26,7 @@ git -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "
 git -C "$WORK/src" config credential.helper '!gh auth git-credential'
 git -C "$WORK/src" fetch -q origin "pull/$PR/head"
 git -C "$WORK/src" checkout -q --detach "$HEAD"
-[ "$(git -C "$WORK/src" rev-parse HEAD)" = "$HEAD" ] || { echo "checkout is not $HEAD; refusing to review" >&2; status error "checkout mismatch"; exit 4; }
+[ "$(git -C "$WORK/src" rev-parse HEAD)" = "$HEAD" ] || { echo "checkout is not $HEAD; refusing to review" >&2; status error "checkout mismatch"; STATE=final; exit 4; }
 gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
 gh pr view "$PR" -R "$R" --json commits -q '"\nCOMMITS:\n" + ([.commits[] | "--- \(.oid[0:7])\n\(.messageHeadline)\n\(.messageBody)"] | join("\n"))' >> "$WORK/pr.txt"
 gh pr diff "$PR" -R "$R" > "$WORK/pr.diff"
@@ -79,13 +81,13 @@ NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 { echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $LABEL (${FAMILY[$REVIEWER]:-none}) · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
   [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; status not posted"; echo; cat "$WORK/review.txt"; } > "$REC"
 
-[ "$NOW" = "$HEAD" ] || { echo "head moved; rerun"; exit 3; }
-STATE=final
+[ "$NOW" = "$HEAD" ] || { ABORT="head moved during review; rerun"; echo "$ABORT"; exit 3; }
 case "$VERDICT" in
   APPROVE) status success "$LABEL: approve" ;;
   REQUEST_CHANGES) status failure "$LABEL: changes requested" ;;
   *) status error "$LABEL: no verdict (see receipt)" ;;
 esac
+STATE=final
 if [ "$POST" = --post ]; then
   { echo "**agent-review** ($LABEL) at \`${HEAD:0:7}\`: **${VERDICT:-NO VERDICT}**"; echo; echo '<details><summary>review</summary>'; echo; cat "$WORK/review.txt"; echo; echo '</details>'; } > "$WORK/comment.md"
   gh pr comment "$PR" -R "$R" -F "$WORK/comment.md" >/dev/null
