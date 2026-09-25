@@ -5,16 +5,20 @@
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
 # Reviewer chain: grok -> agy -> gpt6pro (AGENT_REVIEWER overrides the order); a lane of the writer's model family (AGENT_WRITER_FAMILY) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
+[ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
 OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
 HEAD=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d); STATE=none   # none -> pending -> final
+# never leave a stale pending status: an abort after "pending" is recorded as error on the head
+cleanup(){ [ "$STATE" != pending ] || status error "review aborted before a verdict (see runner log)" || true; rm -rf "$WORK"; }
+trap cleanup EXIT
 REC="$OUT/$(echo "$R" | tr / _)-pr$PR-${HEAD:0:7}.md"
 
 status(){ [ "$POST" = --post ] || return 0
   gh api -X POST "repos/$R/statuses/$HEAD" -f state="$1" -f context=agent-review -f description="$2" >/dev/null; }
 
-status pending "review running"
+status pending "review running"; STATE=pending
 # https + gh credential helper: works for private repos and does not depend on ssh
 git -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "https://github.com/$R.git" "$WORK/src"
 git -C "$WORK/src" config credential.helper '!gh auth git-credential'
@@ -71,6 +75,7 @@ NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
   [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; status not posted"; echo; cat "$WORK/review.txt"; } > "$REC"
 
 [ "$NOW" = "$HEAD" ] || { echo "head moved; rerun"; exit 3; }
+STATE=final
 case "$VERDICT" in
   APPROVE) status success "$LABEL: approve" ;;
   REQUEST_CHANGES) status failure "$LABEL: changes requested" ;;
