@@ -3,7 +3,7 @@
 # commit status `agent-review` on that SHA (the agent-native merge gate; no human approval).
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
-# Reviewer chain: grok -> agy -> gpt6pro (AGENT_REVIEWER overrides the order); a lane of the writer's model family (AGENT_WRITER_FAMILY) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
+# Reviewer chain: grok -> agy -> devin -> gpt6pro (AGENT_REVIEWER overrides the order); a lane of the writer's model family (AGENT_WRITER_FAMILY) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
@@ -39,15 +39,20 @@ Run the repo's own check command if cheap (see AGENTS.md / Makefile). Do not mod
 Output: a findings list, each with file:line, severity (blocker/major/minor/nit) and evidence.
 Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 (REQUEST_CHANGES iff any blocker or major; AI-attribution text and broken links are always major)."
-# Reviewer chain (owner decisions 2026-09-25): grok -> agy -> gpt6pro. Each lane is a different model
+# Reviewer chain (owner decisions 2026-09-25): grok -> agy -> devin -> gpt6pro. Each lane is a different model
 # family; a lane whose family equals the writer's ($AGENT_WRITER_FAMILY, default anthropic) is refused.
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
-declare -A FAMILY=([grok]=xai [agy]=google [gpt6pro]=openai)
+declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
 GPT6PRO=${GPT6PRO_BIN:-gpt6pro}; INLINE_MAX=200000   # bytes of the whole inline prompt
 review_with(){ case "$1" in
   grok) (cd "$WORK/src" && timeout 1500 grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
   agy)  (cd "$WORK/src" && timeout 1500 agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
+  # devin can also run other vendors' models; pin its own swe-2 family so the family map holds
+  devin) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too
+    mkdir -p "$WORK/src/.agent-review" && cp "$WORK/pr.txt" "$WORK/pr.diff" "$WORK/src/.agent-review/"
+    (cd "$WORK/src" && timeout 1800 devin --model swe-2-max --sandbox -p "${PROMPT//$WORK\//.agent-review/}
+Review directly with file reads and read-only git commands; do not invoke skills or subagents.") ;;
   gpt6pro)
     # no filesystem: metadata, commit messages and the COMPLETE diff go inline; whole prompt too large -> not eligible
     { printf '%s\n\nNo checkout is available to you; the PR metadata, commit messages and the complete diff are inline below.\n=== PR METADATA ===\n' "$PROMPT"
@@ -57,7 +62,7 @@ review_with(){ case "$1" in
     timeout 1500 "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
 esac; }
 REVIEWER=none; VERDICT=
-for LANE in ${AGENT_REVIEWER:-grok agy gpt6pro}; do
+for LANE in ${AGENT_REVIEWER:-grok agy devin gpt6pro}; do
   [ -n "${FAMILY[$LANE]:-}" ] || { echo "unknown reviewer lane $LANE" >&2; exit 64; }
   [ "${FAMILY[$LANE]}" != "$WRITER_FAMILY" ] || { echo "skip $LANE: same family as writer ($WRITER_FAMILY)" >&2; continue; }
   rc=0; review_with "$LANE" > "$WORK/review-$LANE.txt" 2>&1 || rc=$?
