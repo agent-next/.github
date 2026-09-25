@@ -44,10 +44,9 @@ These apply even under elevated-permission modes:
 - There is no human approval step. The gate on every default branch is: pull request, every
   required CI check green, and the commit status `agent-review` = success on the PR's current
   head commit.
-- `agent-review` is posted only by an independent reviewer agent from a different model family
-  than the writer, after reviewing that exact head commit file by file
-  (`scripts/agent-review.sh`). A new push creates a new head with no status, so a stale review
-  never counts.
+- `agent-review` is posted by `scripts/agent-review.sh` after a reviewer lane of a different
+  model family than the declared writer family reviews that exact head commit file by file.
+  A new push creates a new head with no status, so a stale review never counts.
 - Anyone with write access can post a commit status, so the merger counts the latest
   `agent-review` status only when its creator is a configured reviewer identity
   (`AGENT_REVIEW_POSTERS`); an unconfigured merger blocks. This is an identity allowlist, not

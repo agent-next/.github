@@ -40,15 +40,15 @@ Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
 declare -A FAMILY=([grok]=xai [agy]=google [gpt6pro]=openai)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
-GPT6PRO=${GPT6PRO_BIN:-gpt6pro}; INLINE_MAX=120000
+GPT6PRO=${GPT6PRO_BIN:-gpt6pro}; INLINE_MAX=200000   # bytes of the whole inline prompt
 review_with(){ case "$1" in
   grok) (cd "$WORK/src" && timeout 1500 grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
   agy)  (cd "$WORK/src" && timeout 1500 agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
   gpt6pro)
-    # no filesystem: metadata, commit messages and the COMPLETE diff go inline; too large -> not eligible
-    [ "$(wc -c < "$WORK/pr.diff")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: diff larger than $INLINE_MAX bytes"; return 65; }
+    # no filesystem: metadata, commit messages and the COMPLETE diff go inline; whole prompt too large -> not eligible
     { printf '%s\n\nNo checkout is available to you; the PR metadata, commit messages and the complete diff are inline below.\n=== PR METADATA ===\n' "$PROMPT"
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
+    [ "$(wc -c < "$WORK/gpt6pro-prompt.txt")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: prompt larger than $INLINE_MAX bytes"; return 65; }
     # via stdin: one argv string is capped at 128 KiB on Linux
     timeout 1500 "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
 esac; }
