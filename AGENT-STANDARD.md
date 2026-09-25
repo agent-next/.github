@@ -20,7 +20,7 @@ this standard, this standard wins unless the owner says otherwise in writing.
 
 These apply even under elevated-permission modes:
 
-- Never commit or print credentials, tokens, or .env files; secrets live in 1Password (op read).
+- Never commit or print credentials, tokens, or .env files; secrets live in a secrets manager outside the repo and are read at runtime.
 - Never delete data files, workspace directories, or agent session/chat history without the owner's confirmation; archive or move instead.
 - Never force-push main/master; touch only branches and worktrees you created.
 - Repo visibility, delete/archive/transfer, branch protection, secrets, releases, and publishing need explicit owner confirmation per action.
@@ -48,6 +48,10 @@ These apply even under elevated-permission modes:
   than the writer, after reviewing that exact head commit file by file
   (`scripts/agent-review.sh`). A new push creates a new head with no status, so a stale review
   never counts.
+- Anyone with write access can post a commit status, so the merger counts the latest
+  `agent-review` status only when its creator is a configured reviewer identity
+  (`AGENT_REVIEW_POSTERS`); an unconfigured merger blocks. Reviewer lanes of the writer's
+  model family are refused, and a lane that errors or gives no verdict never counts.
 - Writer, reviewer, and merger are separate roles. The merger checks the gate and merges that
   exact head (`scripts/agent-merge.sh`); it never reviews its own work.
 - The gate is declared server-side (org ruleset plus per-repo required CI checks), not by
@@ -55,8 +59,8 @@ These apply even under elevated-permission modes:
 
 ## Repo baseline (v0.1.0)
 
-Every active repo carries the per-repo baseline defined in the agent-next baseline
-standard v0.1.0 (2026-09-24). Summary of its sections:
+Every active repo carries this per-repo baseline (v0.1.0, 2026-09-24); this section is its
+complete definition:
 
 1. **AGENTS.md** (required, <=90 lines): repo guide with Purpose, Orient, Setup,
    Check, Boundaries, Done sections; links to this file; only verified facts.

@@ -3,7 +3,7 @@
 # commit status `agent-review` on that SHA (the agent-native merge gate; no human approval).
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
-# Reviewer chain: grok -> agy -> gpt6pro (override with AGENT_REVIEWER); never the writer's model family. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
+# Reviewer chain: grok -> agy -> gpt6pro (AGENT_REVIEWER overrides the order); a lane of the writer's model family (AGENT_WRITER_FAMILY) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 R=$1; PR=$2; POST=${3:-}
 OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
@@ -14,11 +14,13 @@ REC="$OUT/$(echo "$R" | tr / _)-pr$PR-${HEAD:0:7}.md"
 status(){ [ "$POST" = --post ] || return 0
   gh api -X POST "repos/$R/statuses/$HEAD" -f state="$1" -f context=agent-review -f description="$2" >/dev/null; }
 
-status pending "${AGENT_REVIEWER:-grok} review running"
+status pending "review running"
 # https + gh credential helper: works for private repos and does not depend on ssh
 git -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "https://github.com/$R.git" "$WORK/src"
 git -C "$WORK/src" config credential.helper '!gh auth git-credential'
-git -C "$WORK/src" fetch -q origin "pull/$PR/head" && git -C "$WORK/src" checkout -q --detach "$HEAD"
+git -C "$WORK/src" fetch -q origin "pull/$PR/head"
+git -C "$WORK/src" checkout -q --detach "$HEAD"
+[ "$(git -C "$WORK/src" rev-parse HEAD)" = "$HEAD" ] || { echo "checkout is not $HEAD; refusing to review" >&2; status error "checkout mismatch"; exit 4; }
 gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
 gh pr view "$PR" -R "$R" --json commits -q '"\nCOMMITS:\n" + ([.commits[] | "--- \(.oid[0:7])\n\(.messageHeadline)\n\(.messageBody)"] | join("\n"))' >> "$WORK/pr.txt"
 gh pr diff "$PR" -R "$R" > "$WORK/pr.diff"
@@ -33,27 +35,35 @@ Run the repo's own check command if cheap (see AGENTS.md / Makefile). Do not mod
 Output: a findings list, each with file:line, severity (blocker/major/minor/nit) and evidence.
 Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 (REQUEST_CHANGES iff any blocker or major; AI-attribution text and broken links are always major)."
-# Reviewer chain (owner decisions 2026-09-25): grok -> agy -> gpt6pro; a lane that reports it is out
-# of quota is skipped. gpt6pro has no filesystem, so it gets the PR metadata and diff inline.
-GPT6PRO=${GPT6PRO_BIN:-gpt6pro}
+# Reviewer chain (owner decisions 2026-09-25): grok -> agy -> gpt6pro. Each lane is a different model
+# family; a lane whose family equals the writer's ($AGENT_WRITER_FAMILY, default anthropic) is refused.
+# A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
+declare -A FAMILY=([grok]=xai [agy]=google [gpt6pro]=openai)
+WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
+GPT6PRO=${GPT6PRO_BIN:-gpt6pro}; INLINE_MAX=120000
 review_with(){ case "$1" in
   grok) (cd "$WORK/src" && timeout 1500 grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
   agy)  (cd "$WORK/src" && timeout 1500 agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
-  gpt6pro) { printf '%s\n\nNo checkout is available to you; the PR metadata and diff are inline below.\n=== PR METADATA ===\n' "$PROMPT"
-             cat "$WORK/pr.txt"; printf '\n=== DIFF (truncated at 120000 bytes) ===\n'; head -c 120000 "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
-           timeout 1500 "$GPT6PRO" "$(cat "$WORK/gpt6pro-prompt.txt")" ;;
-  *) echo "unknown reviewer $1"; return 64 ;;
+  gpt6pro)
+    # no filesystem: metadata, commit messages and the COMPLETE diff go inline; too large -> not eligible
+    [ "$(wc -c < "$WORK/pr.diff")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: diff larger than $INLINE_MAX bytes"; return 65; }
+    { printf '%s\n\nNo checkout is available to you; the PR metadata, commit messages and the complete diff are inline below.\n=== PR METADATA ===\n' "$PROMPT"
+      cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
+    timeout 1500 "$GPT6PRO" "$(cat "$WORK/gpt6pro-prompt.txt")" ;;
 esac; }
-OUTQ='402 Payment Required|usage balance exhausted|RESOURCE_EXHAUSTED|quota reached|rate limit'
-for REVIEWER in ${AGENT_REVIEWER:-grok agy gpt6pro}; do
-  review_with "$REVIEWER" > "$WORK/review.txt" 2>&1 || true
-  grep -qiE "$OUTQ" "$WORK/review.txt" || break
-  echo "reviewer $REVIEWER unavailable: $(grep -m1 -oiE "$OUTQ" "$WORK/review.txt")" >&2
+REVIEWER=none; VERDICT=
+for LANE in ${AGENT_REVIEWER:-grok agy gpt6pro}; do
+  [ -n "${FAMILY[$LANE]:-}" ] || { echo "unknown reviewer lane $LANE" >&2; exit 64; }
+  [ "${FAMILY[$LANE]}" != "$WRITER_FAMILY" ] || { echo "skip $LANE: same family as writer ($WRITER_FAMILY)" >&2; continue; }
+  rc=0; review_with "$LANE" > "$WORK/review-$LANE.txt" 2>&1 || rc=$?
+  V=$(grep -oE "VERDICT: (APPROVE|REQUEST_CHANGES)" "$WORK/review-$LANE.txt" | tail -1 | cut -d" " -f2 || true)
+  if [ "$rc" -eq 0 ] && [ -n "$V" ]; then REVIEWER=$LANE; VERDICT=$V; cp "$WORK/review-$LANE.txt" "$WORK/review.txt"; break; fi
+  echo "reviewer $LANE not usable (exit $rc): $(grep -m1 -v '^\s*$' "$WORK/review-$LANE.txt" | cut -c1-160)" | tee -a "$WORK/lanes.txt" >&2
 done
-VERDICT=$(grep -oE "VERDICT: (APPROVE|REQUEST_CHANGES)" "$WORK/review.txt" | tail -1 | cut -d" " -f2 || true)
+[ -f "$WORK/review.txt" ] || { echo "no reviewer lane produced a verdict" > "$WORK/review.txt"; cat "$WORK/lanes.txt" >> "$WORK/review.txt" 2>/dev/null || true; }
 
 NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
-{ echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $REVIEWER · $(date -Is)"; echo "verdict: ${VERDICT:-NONE}"
+{ echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $REVIEWER (${FAMILY[$REVIEWER]:-none}) · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
   [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; status not posted"; echo; cat "$WORK/review.txt"; } > "$REC"
 
 [ "$NOW" = "$HEAD" ] || { echo "head moved; rerun"; exit 3; }
