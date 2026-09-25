@@ -15,7 +15,9 @@ status(){ [ "$POST" = --post ] || return 0
   gh api -X POST "repos/$R/statuses/$HEAD" -f state="$1" -f context=agent-review -f description="$2" >/dev/null; }
 
 status pending "${AGENT_REVIEWER:-grok} review running"
-gh repo clone "$R" "$WORK/src" -- -q --filter=blob:none
+# https + gh credential helper: works for private repos and does not depend on ssh
+git -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "https://github.com/$R.git" "$WORK/src"
+git -C "$WORK/src" config credential.helper '!gh auth git-credential'
 git -C "$WORK/src" fetch -q origin "pull/$PR/head" && git -C "$WORK/src" checkout -q --detach "$HEAD"
 gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
 gh pr view "$PR" -R "$R" --json commits -q '"\nCOMMITS:\n" + ([.commits[] | "--- \(.oid[0:7])\n\(.messageHeadline)\n\(.messageBody)"] | join("\n"))' >> "$WORK/pr.txt"
