@@ -49,7 +49,8 @@ review_with(){ case "$1" in
     [ "$(wc -c < "$WORK/pr.diff")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: diff larger than $INLINE_MAX bytes"; return 65; }
     { printf '%s\n\nNo checkout is available to you; the PR metadata, commit messages and the complete diff are inline below.\n=== PR METADATA ===\n' "$PROMPT"
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
-    timeout 1500 "$GPT6PRO" "$(cat "$WORK/gpt6pro-prompt.txt")" ;;
+    # via stdin: one argv string is capped at 128 KiB on Linux
+    timeout 1500 "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
 esac; }
 REVIEWER=none; VERDICT=
 for LANE in ${AGENT_REVIEWER:-grok agy gpt6pro}; do
@@ -62,18 +63,21 @@ for LANE in ${AGENT_REVIEWER:-grok agy gpt6pro}; do
 done
 [ -f "$WORK/review.txt" ] || { echo "no reviewer lane produced a verdict" > "$WORK/review.txt"; cat "$WORK/lanes.txt" >> "$WORK/review.txt" 2>/dev/null || true; }
 
+# lanes may route to a weaker model than requested; surface that on the status and receipt
+DOWNGRADE=$(grep -oE "server resolved \`[^\`]+\`" "$WORK/review.txt" | head -1 | tr -d '\`' || true)
+LABEL=$REVIEWER; [ -z "$DOWNGRADE" ] || LABEL="$REVIEWER (degraded: ${DOWNGRADE#server resolved })"
 NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
-{ echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $REVIEWER (${FAMILY[$REVIEWER]:-none}) · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
+{ echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $LABEL (${FAMILY[$REVIEWER]:-none}) · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
   [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; status not posted"; echo; cat "$WORK/review.txt"; } > "$REC"
 
 [ "$NOW" = "$HEAD" ] || { echo "head moved; rerun"; exit 3; }
 case "$VERDICT" in
-  APPROVE) status success "$REVIEWER: approve" ;;
-  REQUEST_CHANGES) status failure "$REVIEWER: changes requested" ;;
-  *) status error "$REVIEWER: no verdict (see receipt)" ;;
+  APPROVE) status success "$LABEL: approve" ;;
+  REQUEST_CHANGES) status failure "$LABEL: changes requested" ;;
+  *) status error "$LABEL: no verdict (see receipt)" ;;
 esac
 if [ "$POST" = --post ]; then
-  { echo "**agent-review** ($REVIEWER) at \`${HEAD:0:7}\`: **${VERDICT:-NO VERDICT}**"; echo; echo '<details><summary>review</summary>'; echo; cat "$WORK/review.txt"; echo; echo '</details>'; } > "$WORK/comment.md"
+  { echo "**agent-review** ($LABEL) at \`${HEAD:0:7}\`: **${VERDICT:-NO VERDICT}**"; echo; echo '<details><summary>review</summary>'; echo; cat "$WORK/review.txt"; echo; echo '</details>'; } > "$WORK/comment.md"
   gh pr comment "$PR" -R "$R" -F "$WORK/comment.md" >/dev/null
 fi
 echo "$R#$PR ${HEAD:0:7} verdict=${VERDICT:-NONE} receipt=$REC"

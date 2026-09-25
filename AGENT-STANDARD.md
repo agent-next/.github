@@ -50,8 +50,10 @@ These apply even under elevated-permission modes:
   never counts.
 - Anyone with write access can post a commit status, so the merger counts the latest
   `agent-review` status only when its creator is a configured reviewer identity
-  (`AGENT_REVIEW_POSTERS`); an unconfigured merger blocks. Reviewer lanes of the writer's
-  model family are refused, and a lane that errors or gives no verdict never counts.
+  (`AGENT_REVIEW_POSTERS`); an unconfigured merger blocks. This is an identity allowlist, not
+  proof of which agent reviewed. Reviewer lanes of the caller-declared writer model family
+  (`AGENT_WRITER_FAMILY`) are refused, a lane that errors or gives no verdict never counts, and a
+  lane that silently routes to a weaker model is marked degraded on the status.
 - Writer, reviewer, and merger are separate roles. The merger checks the gate and merges that
   exact head (`scripts/agent-merge.sh`); it never reviews its own work.
 - The gate is declared server-side (org ruleset plus per-repo required CI checks), not by

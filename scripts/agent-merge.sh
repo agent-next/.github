@@ -9,11 +9,13 @@ set -euo pipefail
 R=$1; PR=$2
 HEAD=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 POSTERS=${AGENT_REVIEW_POSTERS:?set AGENT_REVIEW_POSTERS to the reviewer identities allowed to post agent-review}
-# statuses are newest first; only the latest agent-review status counts
-read -r AR BY < <(gh api "repos/$R/commits/$HEAD/statuses" --paginate \
-  -q '[.[]|select(.context=="agent-review")]|first|"\(.state // "absent") \(.creator.login // "-")"')
+# the latest agent-review status (by created_at, across all pages) is the only one that counts
+read -r AR BY < <(gh api "repos/$R/commits/$HEAD/statuses?per_page=100" --paginate --slurp |
+  jq -r '[.[][]|select(.context=="agent-review")]|sort_by(.created_at)|last|"\(.state // "absent") \(.creator.login // "-")"')
 [ "$AR" = success ] || { echo "BLOCKED: agent-review=$AR on ${HEAD:0:7}"; exit 2; }
 case ",$POSTERS," in *",$BY,"*) ;; *) echo "BLOCKED: agent-review on ${HEAD:0:7} posted by $BY, not in AGENT_REVIEW_POSTERS"; exit 2 ;; esac
 gh pr checks "$PR" -R "$R" --required >/dev/null || { echo "BLOCKED: required checks not green"; gh pr checks "$PR" -R "$R" --required; exit 2; }
+NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
+[ "$NOW" = "$HEAD" ] || { echo "BLOCKED: head moved ${HEAD:0:7} -> ${NOW:0:7} during the gate check; rerun"; exit 2; }
 gh pr merge "$PR" -R "$R" --squash --match-head-commit "$HEAD"
 gh pr view "$PR" -R "$R" --json state,mergeCommit -q '"'"$R"'#'"$PR"': \(.state) \(.mergeCommit.oid[0:7])"'
