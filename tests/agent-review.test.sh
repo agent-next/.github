@@ -159,6 +159,11 @@ case "$(last_desc)" in "empty writer family") PASS=$((PASS+1)); echo "ok   empty
 # a glob in the list must not expand against the runner's cwd (here a file named like a family)
 mkdir -p "$T/globcwd" && touch "$T/globcwd/anthropic" && cd "$T/globcwd" || exit 1
 run "glob in writer list fails closed, never expands to file names" 64 "pending|error" AGENT_WRITER_FAMILY='*' -- o/r 1 --post
+case "$(last_desc)" in "unknown writer family") PASS=$((PASS+1)); echo "ok   glob writer list names the reason" ;; *) FAIL=$((FAIL+1)); echo "FAIL glob writer list description: $(last_desc)" ;; esac
+rm -f "$T/globcwd/anthropic"; touch "$T/globcwd/gpt6pro"
+run "glob in reviewer list is an unknown lane, never a file name" 64 "pending|error" AGENT_REVIEWER='*' -- o/r 1 --post
+rm -f "$T/globcwd/gpt6pro"; touch "$T/globcwd/devin-b"
+run "glob in devin account list never runs a file-named binary" 1 "pending|error" AGENT_REVIEWER=devin AGENT_REVIEW_DEVIN_BINS='*' AGENT_REVIEW_BACKOFF=0 -- o/r 1 --post
 cd - >/dev/null || exit 1
 run "mixed writer list with cognition still opens devin-sol" 0 "pending|success" AGENT_REVIEWER=devin-sol AGENT_WRITER_FAMILY=anthropic,cognition FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
 run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="devin gpt6pro" FAKE_DEVIN_FAIL=1 -- o/r 1 --post

@@ -6,6 +6,7 @@
 # tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
 # Reviewer chain: grok -> agy -> devin -> devin-sol -> gpt6pro -> ccz (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
+set -f   # no pathname expansion anywhere: unquoted env lists (lanes, accounts, families) must never match files
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
 OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
