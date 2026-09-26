@@ -4,7 +4,7 @@
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
 # tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
-# Reviewer chain: grok -> agy -> devin -> devin-sol -> gpt6pro (AGENT_REVIEWER overrides the order); a lane of the writer's model family (AGENT_WRITER_FAMILY) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
+# Reviewer chain: grok -> agy -> devin -> devin-sol -> gpt6pro -> ccz (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
@@ -50,14 +50,21 @@ Run the repo's own check command if cheap (see AGENTS.md / Makefile). Do not mod
 Output: a findings list, each with file:line, severity (blocker/major/minor/nit) and evidence.
 Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 (REQUEST_CHANGES iff any blocker or major; AI-attribution text and broken links are always major)."
-# Reviewer chain (owner decisions 2026-09-25/26): grok -> agy -> devin -> devin-sol -> gpt6pro. Each lane is a different model
-# family; a lane whose family equals the writer's ($AGENT_WRITER_FAMILY, default anthropic) is refused.
+# Reviewer chain (owner decisions 2026-09-25/26): grok -> agy -> devin -> devin-sol -> gpt6pro -> ccz. Each lane is a different
+# model family; a lane whose family is one of the writers' ($AGENT_WRITER_FAMILY, comma-separated, default anthropic) is
+# refused. ccz (GLM on z.ai) is the stand-in when no frontier lane is healthy; its verdict is labelled ccz on the status.
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
-declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [devin-sol]=openai [gpt6pro]=openai)
+declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [devin-sol]=openai [gpt6pro]=openai [ccz]=zai)
 # the devin CLI runs several vendors' models; each devin lane pins one so the family map holds.
 # devin-sol is paid (owner decision 2026-09-26) and only reviews PRs written by devin's own swe-2 family.
 declare -A DEVIN_MODEL=([devin]=swe-2-max [devin-sol]=gpt-6-sol-high)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
+# normalize (case, spaces) and allow only known families: a typo must fail closed, never let a writer's family review
+WRITER_FAMILY=$(printf '%s' "$WRITER_FAMILY" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+for f in ${WRITER_FAMILY//,/ }; do
+  [[ " anthropic ${FAMILY[*]} " == *" $f "* ]] || { echo "unknown writer family '$f' in AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
+done
+[ -n "${WRITER_FAMILY//,/}" ] || { echo "empty AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
 GPT6PRO=${GPT6PRO_BIN:-gpt6pro}
 # gpt6pro hands the prompt to its model client in one env string, capped at 128 KiB by Linux
 INLINE_MAX=120000
@@ -69,7 +76,7 @@ review_with(){ case "$1" in
   devin|devin-sol) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too. The checkout
     # is untrusted: drop anything the PR put at .agent-review (e.g. a symlink out of the tree) and stage
     # into a directory created fresh here, so cp never writes through a PR-controlled path.
-    [ "$1" = devin ] || [ "$WRITER_FAMILY" = cognition ] || { echo "LANE_INELIGIBLE: paid lane $1 only reviews swe-2-written PRs"; return 65; }
+    [ "$1" = devin ] || [[ ",$WRITER_FAMILY," == *,cognition,* ]] || { echo "LANE_INELIGIBLE: paid lane $1 only reviews swe-2-written PRs"; return 65; }
     { rm -rf "$WORK/src/.agent-review" && mkdir "$WORK/src/.agent-review" &&
       cp "$WORK/pr.txt" "$WORK/pr.diff" "$WORK/src/.agent-review/"; } || { echo "LANE_INELIGIBLE: cannot stage review inputs"; return 65; }
     # an account can be rate-limited (free tier, shared) or out of weekly paid quota: rotate through
@@ -92,11 +99,15 @@ Review directly with file reads and read-only git commands; do not invoke skills
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
     [ "$(wc -c < "$WORK/gpt6pro-prompt.txt")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: prompt larger than $INLINE_MAX bytes"; return 65; }
     timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
+  ccz) # --model pins glm-5.3; an inherited CCZ_TIER (ccz's tier selector) is dropped so it cannot pick a model that
+    # must not see private code
+    (cd "$WORK/src" && env -u CCZ_TIER timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${CCZ_BIN:-ccz}" --model glm-5.3 --add-dir "$WORK" -p "$PROMPT
+Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
 esac; }
 REVIEWER=none; VERDICT=
-for LANE in ${AGENT_REVIEWER:-grok agy devin devin-sol gpt6pro}; do
+for LANE in ${AGENT_REVIEWER:-grok agy devin devin-sol gpt6pro ccz}; do
   [ -n "${FAMILY[$LANE]:-}" ] || { echo "unknown reviewer lane $LANE" >&2; exit 64; }
-  [ "${FAMILY[$LANE]}" != "$WRITER_FAMILY" ] || { echo "skip $LANE: same family as writer ($WRITER_FAMILY)" >&2; continue; }
+  [[ ",$WRITER_FAMILY," != *",${FAMILY[$LANE]},"* ]] || { echo "skip $LANE: same family as a writer ($WRITER_FAMILY)" | tee -a "$WORK/lanes.txt" >&2; continue; }
   rc=0; review_with "$LANE" > "$WORK/review-$LANE.txt" 2>&1 || rc=$?
   V=$(grep -oE "VERDICT: (APPROVE|REQUEST_CHANGES)" "$WORK/review-$LANE.txt" | tail -1 | cut -d" " -f2 || true)
   if [ "$rc" -eq 0 ] && [ -n "$V" ]; then REVIEWER=$LANE; VERDICT=$V; cp "$WORK/review-$LANE.txt" "$WORK/review.txt"; break; fi
