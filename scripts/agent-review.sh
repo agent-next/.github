@@ -9,7 +9,12 @@ set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
 OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
-HEAD=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
+# network steps must not hang the gate: every gh/git network call has a hard limit
+# (AGENT_REVIEW_NET_TIMEOUT seconds, default 900; SIGKILL 30 s later), and git also aborts a
+# transfer below 1 KB/s for 120 s; a stalled clone once ran 75 min
+NET_TIMEOUT=${AGENT_REVIEW_NET_TIMEOUT:-900}
+net(){ timeout -k 30 "$NET_TIMEOUT" "$@"; }
+HEAD=$(net gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 WORK=$(mktemp -d); STATE=none   # none -> pending -> final (final = a terminal status was posted)
 ABORT="review aborted before a verdict (see runner log)"
 # never leave a stale pending status: an abort after "pending" is recorded as error on the head
@@ -18,18 +23,21 @@ trap cleanup EXIT   # bash also runs this on SIGTERM (verified, bash 5.2; see te
 REC="$OUT/$(echo "$R" | tr / _)-pr$PR-${HEAD:0:7}.md"
 
 status(){ [ "$POST" = --post ] || return 0
-  gh api -X POST "repos/$R/statuses/$HEAD" -f state="$1" -f context=agent-review -f description="$2" >/dev/null; }
+  net gh api -X POST "repos/$R/statuses/$HEAD" -f state="$1" -f context=agent-review -f description="$2" >/dev/null; }
 
 status pending "review running"; STATE=pending
 # https + gh credential helper: works for private repos and does not depend on ssh
-git -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "https://github.com/$R.git" "$WORK/src"
+SLOW=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120)
+net git "${SLOW[@]}" -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "https://github.com/$R.git" "$WORK/src"
 git -C "$WORK/src" config credential.helper '!gh auth git-credential'
-git -C "$WORK/src" fetch -q origin "pull/$PR/head"
-git -C "$WORK/src" checkout -q --detach "$HEAD"
+git -C "$WORK/src" config http.lowSpeedLimit 1000
+git -C "$WORK/src" config http.lowSpeedTime 120
+net git -C "$WORK/src" fetch -q origin "pull/$PR/head"
+net git -C "$WORK/src" checkout -q --detach "$HEAD"   # blob:none: checkout fetches blobs
 [ "$(git -C "$WORK/src" rev-parse HEAD)" = "$HEAD" ] || { echo "checkout is not $HEAD; refusing to review" >&2; status error "checkout mismatch"; STATE=final; exit 4; }
-gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
-gh pr view "$PR" -R "$R" --json commits -q '"\nCOMMITS:\n" + ([.commits[] | "--- \(.oid[0:7])\n\(.messageHeadline)\n\(.messageBody)"] | join("\n"))' >> "$WORK/pr.txt"
-gh pr diff "$PR" -R "$R" > "$WORK/pr.diff"
+net gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
+net gh pr view "$PR" -R "$R" --json commits -q '"\nCOMMITS:\n" + ([.commits[] | "--- \(.oid[0:7])\n\(.messageHeadline)\n\(.messageBody)"] | join("\n"))' >> "$WORK/pr.txt"
+net gh pr diff "$PR" -R "$R" > "$WORK/pr.diff"
 
 PROMPT="You are the independent reviewer for pull request $R#$PR at head $HEAD. The checkout in the
 current directory is that exact commit. PR metadata: $WORK/pr.txt. Full diff: $WORK/pr.diff.
@@ -100,7 +108,7 @@ done
 # lanes may route to a weaker model than requested; surface that on the status and receipt
 DOWNGRADE=$(grep -oE "server resolved \`[^\`]+\`" "$WORK/review.txt" | head -1 | tr -d '\`' || true)
 LABEL=$REVIEWER; [ -z "$DOWNGRADE" ] || LABEL="$REVIEWER (degraded: ${DOWNGRADE#server resolved })"
-NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
+NOW=$(net gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 { echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $LABEL (${FAMILY[$REVIEWER]:-none}) · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
   [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; posted error, rerun"; echo; cat "$WORK/review.txt"; } > "$REC"
 
@@ -113,7 +121,7 @@ esac
 STATE=final
 if [ "$POST" = --post ]; then
   { echo "**agent-review** ($LABEL) at \`${HEAD:0:7}\`: **${VERDICT:-NO VERDICT}**"; echo; echo '<details><summary>review</summary>'; echo; cat "$WORK/review.txt"; echo; echo '</details>'; } > "$WORK/comment.md"
-  gh pr comment "$PR" -R "$R" -F "$WORK/comment.md" >/dev/null
+  net gh pr comment "$PR" -R "$R" -F "$WORK/comment.md" >/dev/null
 fi
 echo "$R#$PR ${HEAD:0:7} verdict=${VERDICT:-NONE} receipt=$REC"
 [ "$VERDICT" = APPROVE ]
