@@ -85,7 +85,7 @@ run "request changes posts failure" 1 "pending|failure" FAKE_REPLY='VERDICT: REQ
 run "crashed lane never counts, even with a verdict" 1 "pending|error" FAKE_RC=1 -- o/r 1 --post
 run "no verdict posts error" 1 "pending|error" FAKE_REPLY='I could not finish' -- o/r 1 --post
 run "same-family lane is refused" 1 "pending|error" AGENT_WRITER_FAMILY=openai -- o/r 1 --post
-run "oversized inline prompt makes the lane ineligible" 1 "pending|error" FAKE_DIFF_BYTES=250000 -- o/r 1 --post
+run "inline prompt over the 128 KiB env limit makes the lane ineligible" 1 "pending|error" FAKE_DIFF_BYTES=130000 -- o/r 1 --post
 run "clone failure after pending posts error" 128 "pending|error" FAKE_CLONE_FAIL=1 -- o/r 1 --post
 run "checkout mismatch posts one specific error" 4 "pending|error" FAKE_CHECKOUT=bbbbbbb -- o/r 1 --post
 case "$(last_desc)" in "checkout mismatch") PASS=$((PASS+1)); echo "ok   checkout mismatch keeps its description" ;; *) FAIL=$((FAIL+1)); echo "FAIL checkout mismatch description: $(last_desc)" ;; esac
@@ -95,6 +95,8 @@ case "$(last_desc)" in *"head moved"*) PASS=$((PASS+1)); echo "ok   head move na
 run "downgraded model is labelled degraded" 0 "pending|success" FAKE_REPLY='VERDICT: APPROVE\nthe server resolved `mini-model`' -- o/r 1 --post
 case "$(last_desc)" in *"degraded: mini-model"*) PASS=$((PASS+1)); echo "ok   degraded label on status" ;; *) FAIL=$((FAIL+1)); echo "FAIL degraded description: $(last_desc)" ;; esac
 
+printf '#!/usr/bin/env bash\nsleep 5\necho "VERDICT: APPROVE"\n' > "$T/bin/slow5"; chmod +x "$T/bin/slow5"
+run "lane over AGENT_REVIEW_TIMEOUT never counts" 1 "pending|error" AGENT_REVIEW_TIMEOUT=1 GPT6PRO_BIN="$T/bin/slow5" -- o/r 1 --post
 echo "do not overwrite" > "$T/victim"
 run "devin lane: pinned model, sandbox, staged inputs" 0 "pending|success" AGENT_REVIEWER=devin -- o/r 1 --post
 run "devin lane: planted symlink is not written through" 0 "pending|success" AGENT_REVIEWER=devin FAKE_PLANT="$T/victim" -- o/r 1 --post

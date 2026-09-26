@@ -46,25 +46,28 @@ Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
 declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
-GPT6PRO=${GPT6PRO_BIN:-gpt6pro}; INLINE_MAX=200000   # bytes of the whole inline prompt
+GPT6PRO=${GPT6PRO_BIN:-gpt6pro}
+# gpt6pro hands the prompt to its model client in one env string, capped at 128 KiB by Linux
+INLINE_MAX=120000
+# per-lane time limit in seconds; raise it for large PRs (a 42-file port needed more than 1800)
+LANE_TIMEOUT=${AGENT_REVIEW_TIMEOUT:-1800}
 review_with(){ case "$1" in
-  grok) (cd "$WORK/src" && timeout 1500 grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
-  agy)  (cd "$WORK/src" && timeout 1500 agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
+  grok) (cd "$WORK/src" && timeout "$LANE_TIMEOUT" grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
+  agy)  (cd "$WORK/src" && timeout "$LANE_TIMEOUT" agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
   # devin can also run other vendors' models; pin its own swe-2 family so the family map holds
   devin) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too. The checkout
     # is untrusted: drop anything the PR put at .agent-review (e.g. a symlink out of the tree) and stage
     # into a directory created fresh here, so cp never writes through a PR-controlled path.
     { rm -rf "$WORK/src/.agent-review" && mkdir "$WORK/src/.agent-review" &&
       cp "$WORK/pr.txt" "$WORK/pr.diff" "$WORK/src/.agent-review/"; } || { echo "LANE_INELIGIBLE: cannot stage review inputs"; return 65; }
-    (cd "$WORK/src" && timeout 1800 devin --model swe-2-max --sandbox -p "${PROMPT//$WORK\//.agent-review/}
+    (cd "$WORK/src" && timeout "$LANE_TIMEOUT" devin --model swe-2-max --sandbox -p "${PROMPT//$WORK\//.agent-review/}
 Review directly with file reads and read-only git commands; do not invoke skills or subagents.") ;;
   gpt6pro)
     # no filesystem: metadata, commit messages and the COMPLETE diff go inline; whole prompt too large -> not eligible
     { printf '%s\n\nNo checkout is available to you; the PR metadata, commit messages and the complete diff are inline below.\n=== PR METADATA ===\n' "$PROMPT"
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
     [ "$(wc -c < "$WORK/gpt6pro-prompt.txt")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: prompt larger than $INLINE_MAX bytes"; return 65; }
-    # via stdin: one argv string is capped at 128 KiB on Linux
-    timeout 1500 "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
+    timeout "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
 esac; }
 REVIEWER=none; VERDICT=
 for LANE in ${AGENT_REVIEWER:-grok agy devin gpt6pro}; do
