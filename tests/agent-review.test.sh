@@ -31,7 +31,9 @@ cat > "$T/bin/git" <<'EOF'
 #!/usr/bin/env bash
 args="$*"
 case "$args" in
-  *" clone "*) [ -z "${FAKE_CLONE_FAIL:-}" ] || { echo "fatal: clone failed" >&2; exit 128; }; mkdir -p "${!#}" ;;
+  *" clone "*) [ -z "${FAKE_CLONE_FAIL:-}" ] || { echo "fatal: clone failed" >&2; exit 128; }; mkdir -p "${!#}"
+    # a hostile PR can commit .agent-review/pr.txt as a symlink out of the checkout
+    [ -z "${FAKE_PLANT:-}" ] || { mkdir -p "${!#}/.agent-review"; ln -s "$FAKE_PLANT" "${!#}/.agent-review/pr.txt"; } ;;
   *" rev-parse HEAD") echo "${FAKE_CHECKOUT:-$FAKE_HEAD}" ;;
   *) : ;;
 esac
@@ -42,6 +44,16 @@ cat > "$T/bin/lane" <<'EOF'
 cat > /dev/null
 printf '%b\n' "$FAKE_REPLY"
 exit "${FAKE_RC:-0}"
+EOF
+# devin shim: approves only if it was pinned to swe-2-max in the sandbox, its inputs are regular
+# files inside the checkout, and the prompt points at them by relative path
+cat > "$T/bin/devin" <<'EOF'
+#!/usr/bin/env bash
+[ "${FAKE_DEVIN_FAIL:-}" ] && { echo "devin: simulated failure"; exit 1; }
+[ "$1 $2 $3 $4" = "--model swe-2-max --sandbox -p" ] || { echo "bad flags: $*"; exit 2; }
+for f in pr.txt pr.diff; do [ -f ".agent-review/$f" ] && [ ! -L ".agent-review/$f" ] || { echo "input $f missing or a symlink"; exit 3; }; done
+case "$5" in *"PR metadata: .agent-review/pr.txt. Full diff: .agent-review/pr.diff."*) ;; *) echo "prompt paths not rewritten"; exit 4 ;; esac
+echo "VERDICT: APPROVE"
 EOF
 chmod +x "$T/bin/"*
 
@@ -77,6 +89,13 @@ case "$(last_desc)" in *"head moved"*) PASS=$((PASS+1)); echo "ok   head move na
 # shellcheck disable=SC2016  # the backticks are literal reviewer output
 run "downgraded model is labelled degraded" 0 "pending|success" FAKE_REPLY='VERDICT: APPROVE\nthe server resolved `mini-model`' -- o/r 1 --post
 case "$(last_desc)" in *"degraded: mini-model"*) PASS=$((PASS+1)); echo "ok   degraded label on status" ;; *) FAIL=$((FAIL+1)); echo "FAIL degraded description: $(last_desc)" ;; esac
+
+echo "do not overwrite" > "$T/victim"
+run "devin lane: pinned model, sandbox, staged inputs" 0 "pending|success" AGENT_REVIEWER=devin -- o/r 1 --post
+run "devin lane: planted symlink is not written through" 0 "pending|success" AGENT_REVIEWER=devin FAKE_PLANT="$T/victim" -- o/r 1 --post
+case "$(cat "$T/victim")" in "do not overwrite") PASS=$((PASS+1)); echo "ok   planted symlink target untouched" ;; *) FAIL=$((FAIL+1)); echo "FAIL planted symlink target was overwritten" ;; esac
+run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="devin gpt6pro" FAKE_DEVIN_FAIL=1 -- o/r 1 --post
+case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback verdict comes from the next lane" ;; *) FAIL=$((FAIL+1)); echo "FAIL fallback description: $(last_desc)" ;; esac
 
 # SIGTERM (outer timeout, CI cancel) during the review must not leave pending behind
 rm -f "$T/statuses" "$T/heads"

@@ -14,7 +14,7 @@ WORK=$(mktemp -d); STATE=none   # none -> pending -> final (final = a terminal s
 ABORT="review aborted before a verdict (see runner log)"
 # never leave a stale pending status: an abort after "pending" is recorded as error on the head
 cleanup(){ [ "$STATE" != pending ] || status error "$ABORT" || true; rm -rf "$WORK"; }
-trap cleanup EXIT   # bash also runs this on SIGTERM/SIGINT (verified, bash 5.2)
+trap cleanup EXIT   # bash also runs this on SIGTERM (verified, bash 5.2; see tests)
 REC="$OUT/$(echo "$R" | tr / _)-pr$PR-${HEAD:0:7}.md"
 
 status(){ [ "$POST" = --post ] || return 0
@@ -51,8 +51,11 @@ review_with(){ case "$1" in
   grok) (cd "$WORK/src" && timeout 1500 grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
   agy)  (cd "$WORK/src" && timeout 1500 agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
   # devin can also run other vendors' models; pin its own swe-2 family so the family map holds
-  devin) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too
-    mkdir -p "$WORK/src/.agent-review" && cp "$WORK/pr.txt" "$WORK/pr.diff" "$WORK/src/.agent-review/"
+  devin) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too. The checkout
+    # is untrusted: drop anything the PR put at .agent-review (e.g. a symlink out of the tree) and stage
+    # into a directory created fresh here, so cp never writes through a PR-controlled path.
+    { rm -rf "$WORK/src/.agent-review" && mkdir "$WORK/src/.agent-review" &&
+      cp "$WORK/pr.txt" "$WORK/pr.diff" "$WORK/src/.agent-review/"; } || { echo "LANE_INELIGIBLE: cannot stage review inputs"; return 65; }
     (cd "$WORK/src" && timeout 1800 devin --model swe-2-max --sandbox -p "${PROMPT//$WORK\//.agent-review/}
 Review directly with file reads and read-only git commands; do not invoke skills or subagents.") ;;
   gpt6pro)
@@ -79,7 +82,7 @@ DOWNGRADE=$(grep -oE "server resolved \`[^\`]+\`" "$WORK/review.txt" | head -1 |
 LABEL=$REVIEWER; [ -z "$DOWNGRADE" ] || LABEL="$REVIEWER (degraded: ${DOWNGRADE#server resolved })"
 NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 { echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $LABEL (${FAMILY[$REVIEWER]:-none}) · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
-  [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; status not posted"; echo; cat "$WORK/review.txt"; } > "$REC"
+  [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; posted error, rerun"; echo; cat "$WORK/review.txt"; } > "$REC"
 
 [ "$NOW" = "$HEAD" ] || { ABORT="head moved during review; rerun"; echo "$ABORT"; exit 3; }
 case "$VERDICT" in
