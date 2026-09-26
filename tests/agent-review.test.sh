@@ -155,6 +155,11 @@ run "writer list with spaces and capitals still refuses every family" 1 "pending
 run "misspelled writer family fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=cognitoin -- o/r 1 --post
 case "$(last_desc)" in "unknown writer family") PASS=$((PASS+1)); echo "ok   unknown family names the reason" ;; *) FAIL=$((FAIL+1)); echo "FAIL unknown family description: $(last_desc)" ;; esac
 run "empty writer list fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=", ," -- o/r 1 --post
+case "$(last_desc)" in "empty writer family") PASS=$((PASS+1)); echo "ok   empty list names its own reason" ;; *) FAIL=$((FAIL+1)); echo "FAIL empty list description: $(last_desc)" ;; esac
+# a glob in the list must not expand against the runner's cwd (here a file named like a family)
+mkdir -p "$T/globcwd" && touch "$T/globcwd/anthropic" && cd "$T/globcwd" || exit 1
+run "glob in writer list fails closed, never expands to file names" 64 "pending|error" AGENT_WRITER_FAMILY='*' -- o/r 1 --post
+cd - >/dev/null || exit 1
 run "mixed writer list with cognition still opens devin-sol" 0 "pending|success" AGENT_REVIEWER=devin-sol AGENT_WRITER_FAMILY=anthropic,cognition FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
 run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="devin gpt6pro" FAKE_DEVIN_FAIL=1 -- o/r 1 --post
 case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback verdict comes from the next lane" ;; *) FAIL=$((FAIL+1)); echo "FAIL fallback description: $(last_desc)" ;; esac
