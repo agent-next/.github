@@ -120,6 +120,11 @@ case "$(last_desc)" in *"degraded: mini-model"*) PASS=$((PASS+1)); echo "ok   de
 
 printf '#!/usr/bin/env bash\nsleep 5\necho "VERDICT: APPROVE"\n' > "$T/bin/slow5"; chmod +x "$T/bin/slow5"
 run "lane over AGENT_REVIEW_TIMEOUT never counts" 1 "pending|error" AGENT_REVIEW_TIMEOUT=1 GPT6PRO_BIN="$T/bin/slow5" -- o/r 1 --post
+# a lane that ignores SIGTERM must still be killed, AGENT_REVIEW_KILL_AFTER seconds after the limit
+printf '#!/usr/bin/env bash\ntrap "" TERM\nsleep 20\necho "VERDICT: APPROVE"\n' > "$T/bin/stubborn"; chmod +x "$T/bin/stubborn"
+t0=$SECONDS
+run "lane ignoring SIGTERM is killed and never counts" 1 "pending|error" AGENT_REVIEW_TIMEOUT=1 AGENT_REVIEW_KILL_AFTER=1 GPT6PRO_BIN="$T/bin/stubborn" -- o/r 1 --post
+if [ $((SECONDS - t0)) -lt 10 ]; then PASS=$((PASS+1)); echo "ok   stubborn lane killed in $((SECONDS - t0)) s, not after its 20 s run"; else FAIL=$((FAIL+1)); echo "FAIL stubborn lane held the gate $((SECONDS - t0)) s"; fi
 echo "do not overwrite" > "$T/victim"
 run "devin lane: pinned model, sandbox, staged inputs" 0 "pending|success" AGENT_REVIEWER=devin -- o/r 1 --post
 run "devin lane: planted symlink is not written through" 0 "pending|success" AGENT_REVIEWER=devin FAKE_PLANT="$T/victim" -- o/r 1 --post
