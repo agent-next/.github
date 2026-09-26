@@ -71,6 +71,15 @@ for f in pr.txt pr.diff; do [ -f ".agent-review/$f" ] && [ ! -L ".agent-review/$
 case "$5" in *"PR metadata: .agent-review/pr.txt. Full diff: .agent-review/pr.diff."*) ;; *) echo "prompt paths not rewritten"; exit 4 ;; esac
 echo "VERDICT: APPROVE"
 EOF
+# ccz shim: approves only if pinned to glm-5.3, headless, and not steered by an inherited CCZ_TIER
+cat > "$T/bin/ccz" <<'EOF'
+#!/usr/bin/env bash
+[ -z "${CCZ_TIER+x}" ] || { echo "CCZ_TIER leaked: $CCZ_TIER"; exit 5; }
+[ "$1 $2 $3" = "--model glm-5.3 --add-dir" ] || { echo "bad flags: $*"; exit 2; }
+[ -f "$4/pr.txt" ] && [ -f "$4/pr.diff" ] || { echo "review inputs not reachable via --add-dir: $4"; exit 4; }
+case " $* " in *" -p "*) ;; *) echo "not headless"; exit 3 ;; esac
+echo "VERDICT: APPROVE"
+EOF
 chmod +x "$T/bin/"*
 # a second account that is never rate-limited, and the shim renamed so only the named bin can run
 cp "$T/bin/devin" "$T/bin/devin-b"
@@ -138,6 +147,15 @@ run "account out of weekly quota rotates to the next account" 0 "pending|success
 run "paid devin-sol lane refuses a non-swe-2 writer" 1 "pending|error" AGENT_REVIEWER=devin-sol FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
 run "swe-2 writer skips devin and is reviewed by devin-sol" 0 "pending|success" AGENT_REVIEWER="devin devin-sol" AGENT_WRITER_FAMILY=cognition FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
 case "$(last_desc)" in "devin-sol: approve") PASS=$((PASS+1)); echo "ok   devin-sol verdict is attributed to devin-sol" ;; *) FAIL=$((FAIL+1)); echo "FAIL devin-sol description: $(last_desc)" ;; esac
+run "ccz stand-in: pinned model, inherited CCZ_TIER dropped" 0 "pending|success" AGENT_REVIEWER=ccz CCZ_TIER=some-other-tier -- o/r 1 --post
+case "$(last_desc)" in "ccz: approve") PASS=$((PASS+1)); echo "ok   ccz verdict is attributed to ccz" ;; *) FAIL=$((FAIL+1)); echo "FAIL ccz description: $(last_desc)" ;; esac
+run "every family in a writer list is refused" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY=cognition,zai -- o/r 1 --post
+if grep -q "skip devin: same family" "$T/out/"*.md; then PASS=$((PASS+1)); echo "ok   receipt records why a lane was skipped"; else FAIL=$((FAIL+1)); echo "FAIL receipt lacks the skip reason"; fi
+run "writer list with spaces and capitals still refuses every family" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY="Anthropic, Cognition , ZAI" -- o/r 1 --post
+run "misspelled writer family fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=cognitoin -- o/r 1 --post
+case "$(last_desc)" in "unknown writer family") PASS=$((PASS+1)); echo "ok   unknown family names the reason" ;; *) FAIL=$((FAIL+1)); echo "FAIL unknown family description: $(last_desc)" ;; esac
+run "empty writer list fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=", ," -- o/r 1 --post
+run "mixed writer list with cognition still opens devin-sol" 0 "pending|success" AGENT_REVIEWER=devin-sol AGENT_WRITER_FAMILY=anthropic,cognition FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
 run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="devin gpt6pro" FAKE_DEVIN_FAIL=1 -- o/r 1 --post
 case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback verdict comes from the next lane" ;; *) FAIL=$((FAIL+1)); echo "FAIL fallback description: $(last_desc)" ;; esac
 
