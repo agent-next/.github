@@ -13,7 +13,8 @@ OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
 # (AGENT_REVIEW_NET_TIMEOUT seconds, default 900; SIGKILL 30 s later), and git also aborts a
 # transfer below 1 KB/s for 120 s; a stalled clone once ran 75 min
 NET_TIMEOUT=${AGENT_REVIEW_NET_TIMEOUT:-900}
-net(){ timeout -k 30 "$NET_TIMEOUT" "$@"; }
+KILL_AFTER=${AGENT_REVIEW_KILL_AFTER:-30}   # SIGKILL this long after SIGTERM, for net and lane limits
+net(){ timeout -k "$KILL_AFTER" "$NET_TIMEOUT" "$@"; }
 HEAD=$(net gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 WORK=$(mktemp -d); STATE=none   # none -> pending -> final (final = a terminal status was posted)
 ABORT="review aborted before a verdict (see runner log)"
@@ -63,8 +64,8 @@ INLINE_MAX=120000
 # per-lane time limit in seconds; raise it for large PRs (a 42-file port needed more than 1800)
 LANE_TIMEOUT=${AGENT_REVIEW_TIMEOUT:-1800}
 review_with(){ case "$1" in
-  grok) (cd "$WORK/src" && timeout "$LANE_TIMEOUT" grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
-  agy)  (cd "$WORK/src" && timeout "$LANE_TIMEOUT" agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
+  grok) (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
+  agy)  (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
   devin|devin-sol) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too. The checkout
     # is untrusted: drop anything the PR put at .agent-review (e.g. a symlink out of the tree) and stage
     # into a directory created fresh here, so cp never writes through a PR-controlled path.
@@ -76,7 +77,7 @@ review_with(){ case "$1" in
     local drc bin
     for try in 1 2 3; do
       for bin in ${AGENT_REVIEW_DEVIN_BINS:-devin}; do
-        (cd "$WORK/src" && timeout "$LANE_TIMEOUT" "$bin" --model "${DEVIN_MODEL[$1]}" --sandbox -p "${PROMPT//$WORK\//.agent-review/}
+        (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "$bin" --model "${DEVIN_MODEL[$1]}" --sandbox -p "${PROMPT//$WORK\//.agent-review/}
 Review directly with file reads and read-only git commands; do not invoke skills or subagents.") > "$WORK/devin-try.txt" 2>&1 && { cat "$WORK/devin-try.txt"; return 0; }
         drc=$?   # local: the caller's lane loop owns rc
         grep -qE "rate limit|usage quota has been exhausted" "$WORK/devin-try.txt" || { cat "$WORK/devin-try.txt"; return "$drc"; }
@@ -90,7 +91,7 @@ Review directly with file reads and read-only git commands; do not invoke skills
     { printf '%s\n\nNo checkout is available to you; the PR metadata, commit messages and the complete diff are inline below.\n=== PR METADATA ===\n' "$PROMPT"
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
     [ "$(wc -c < "$WORK/gpt6pro-prompt.txt")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: prompt larger than $INLINE_MAX bytes"; return 65; }
-    timeout "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
+    timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
 esac; }
 REVIEWER=none; VERDICT=
 for LANE in ${AGENT_REVIEWER:-grok agy devin devin-sol gpt6pro}; do
