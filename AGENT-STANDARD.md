@@ -1,4 +1,4 @@
-# agent-next agent standard — v0.2.0
+# agent-next agent standard — v0.2.1
 
 ## Scope
 
@@ -55,8 +55,18 @@ These apply even under elevated-permission modes:
   lane that silently routes to a weaker model is marked degraded on the status.
 - Writer, reviewer, and merger are separate roles. The merger checks the gate and merges that
   exact head (`scripts/agent-merge.sh`); it never reviews its own work.
-- The gate is declared server-side (org ruleset plus per-repo required CI checks), not by
-  convention. Changing it is an owner-gated action.
+- The gate is declared server-side, not by convention. The org is on a paid GitHub Team
+  plan; default branches carry repo rulesets (or classic branch protection on older
+  repos) that block deletion and non-fast-forward pushes and require a pull request.
+  Approval counts differ per repo — 0 where the agent-native gate is wired (the
+  `agent-review` status is the review), 1 where older protection still requires it.
+  zagent's `agent-merge-gate` ruleset is the reference: `pull_request` plus required
+  status checks including `agent-review`. Changing any of this is an owner-gated action.
+- Agent-side enforcement: `scripts/agent-merge.sh` (this repo) merges only an exact head
+  with `agent-review` = success and all required checks green. For repos not yet wired
+  for `agent-review`, `gh-safe-merge` (robotlearning123/my-coding-agent-config, `bin/`)
+  is the green-checks gate. Checking CI and merging are separate steps: confirm every
+  required check green on the current head, then merge that head.
 
 ## Repo baseline (v0.1.0)
 
@@ -69,8 +79,9 @@ complete definition:
 3. **Makefile**: `setup` and `check` targets using the repo's existing tooling;
    `check` is never a no-op — repos without tests run the cheapest real validation.
 4. **CI**: a `ci.yml` on pull_request + push to default that runs `make setup` and
-   `make check`, if no existing workflow tests PRs; existing CI is never rewritten;
-   private repos get minimal jobs only (free Actions minutes).
+   `make check`, if no existing workflow tests PRs; existing CI is never rewritten.
+   Self-hosted jobs run on the ci-do1 ephemeral pool (runner label `agent-next-ci`);
+   private repos get minimal jobs only.
 5. **Dependabot**: monthly, grouped, limit 2, ecosystems actually present.
 6. **Dev environment**: minimal `.devcontainer` with official image and
    `postCreateCommand: make setup`; skipped for docs-only repos.
@@ -79,8 +90,9 @@ complete definition:
 
 Org hygiene is reported, not improvised:
 
-- `org-state-report` runs daily and reports: clone freshness, merged branches to
-  prune, worktrees stale >7 days, and PRs open >14 days.
+- `org-state-report` runs daily at 06:23 via a systemd user timer on robot-intel and
+  reports: clone freshness, merged branches to prune, worktrees stale >7 days, and
+  PRs open >14 days.
 - Agents act on that report only within their authorization — pruning a merged
   branch you created is routine; deleting anything else needs owner confirmation
   per the hard limits.
