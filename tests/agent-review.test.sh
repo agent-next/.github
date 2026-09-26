@@ -12,6 +12,8 @@ mkdir -p "$T/bin"
 cat > "$T/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 args="$*"
+# FAKE_GH_HANG=<glob>: a gh call matching it hangs, as on a trickling link
+case "$args" in ${FAKE_GH_HANG:-"no match"}) sleep 30 ;; esac
 case "$args" in
   *"--json headRefOid"*)
     n=$(( $(cat "$T/heads" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$T/heads"
@@ -33,9 +35,17 @@ cat > "$T/bin/git" <<'EOF'
 #!/usr/bin/env bash
 args="$*"
 case "$args" in
-  *" clone "*) [ -z "${FAKE_CLONE_FAIL:-}" ] || { echo "fatal: clone failed" >&2; exit 128; }; mkdir -p "${!#}"
+  *" clone "*) [ -z "${FAKE_CLONE_FAIL:-}" ] || { echo "fatal: clone failed" >&2; exit 128; }
+    [ -z "${FAKE_CLONE_HANG:-}" ] || sleep 30
+    case "$args" in *"http.lowSpeedLimit=1000"*"http.lowSpeedTime=120"*) ;; *) echo "clone without stall abort: $args" >&2; exit 97 ;; esac
+    mkdir -p "${!#}"
     # a hostile PR can commit .agent-review/pr.txt as a symlink out of the checkout
     [ -z "${FAKE_PLANT:-}" ] || { mkdir -p "${!#}/.agent-review"; ln -s "$FAKE_PLANT" "${!#}/.agent-review/pr.txt"; } ;;
+  *" config http.lowSpeed"*) echo "${args##*config }" >> "$T/git-config" ;;
+  *" fetch "*) [ -z "${FAKE_FETCH_HANG:-}" ] || sleep 30
+    # the stall abort must be persisted in the clone, not only passed to clone
+    [ "$(paste -sd' ' "$T/git-config" 2>/dev/null)" = "http.lowSpeedLimit 1000 http.lowSpeedTime 120" ] || { echo "fetch without stall abort" >&2; exit 97; } ;;
+  *" checkout "*) [ -z "${FAKE_CHECKOUT_HANG:-}" ] || sleep 30 ;;
   *" rev-parse HEAD") echo "${FAKE_CHECKOUT:-$FAKE_HEAD}" ;;
   *) : ;;
 esac
@@ -70,7 +80,7 @@ PASS=0; FAIL=0
 run(){
   local name=$1 want_rc=$2 want=$3; shift 3
   local envs=(); while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
-  rm -f "$T/statuses" "$T/heads" "$T/failed-once" "$T/devin-runs" "$T/devin-bins"
+  rm -f "$T/statuses" "$T/heads" "$T/failed-once" "$T/devin-runs" "$T/devin-bins" "$T/git-config"
   # start from a clean environment so caller-exported AGENT_*/FAKE_* values cannot leak in
   env -i HOME="$HOME" PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 \
       AGENT_REVIEW_OUT="$T/out" AGENT_REVIEWER=gpt6pro GPT6PRO_BIN="$T/bin/lane" \
@@ -93,6 +103,13 @@ run "no verdict posts error" 1 "pending|error" FAKE_REPLY='I could not finish' -
 run "same-family lane is refused" 1 "pending|error" AGENT_WRITER_FAMILY=openai -- o/r 1 --post
 run "inline prompt over the 128 KiB env limit makes the lane ineligible" 1 "pending|error" FAKE_DIFF_BYTES=130000 -- o/r 1 --post
 run "clone failure after pending posts error" 128 "pending|error" FAKE_CLONE_FAIL=1 -- o/r 1 --post
+run "hung clone hits the network timeout and posts error" 124 "pending|error" FAKE_CLONE_HANG=1 AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
+run "hung fetch hits the network timeout and posts error" 124 "pending|error" FAKE_FETCH_HANG=1 AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
+run "hung checkout hits the network timeout and posts error" 124 "pending|error" FAKE_CHECKOUT_HANG=1 AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
+run "hung pending post is overwritten by error, never left pending" 124 "error" FAKE_GH_HANG='*state=pending*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
+run "hung head lookup exits before any status" 124 "" FAKE_GH_HANG='*--json headRefOid*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
+run "hung diff download hits the network timeout and posts error" 124 "pending|error" FAKE_GH_HANG='pr diff*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
+run "hung error post in the cleanup trap still exits" 128 "pending" FAKE_CLONE_FAIL=1 FAKE_GH_HANG='*state=error*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
 run "checkout mismatch posts one specific error" 4 "pending|error" FAKE_CHECKOUT=bbbbbbb -- o/r 1 --post
 case "$(last_desc)" in "checkout mismatch") PASS=$((PASS+1)); echo "ok   checkout mismatch keeps its description" ;; *) FAIL=$((FAIL+1)); echo "FAIL checkout mismatch description: $(last_desc)" ;; esac
 run "head moved during review posts error" 3 "pending|error" FAKE_NEW_HEAD=ccccccc2222222222222222222222222222222222 -- o/r 1 --post
@@ -120,7 +137,7 @@ run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIE
 case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback verdict comes from the next lane" ;; *) FAIL=$((FAIL+1)); echo "FAIL fallback description: $(last_desc)" ;; esac
 
 # SIGTERM (outer timeout, CI cancel) during the review must not leave pending behind
-rm -f "$T/statuses" "$T/heads"
+rm -f "$T/statuses" "$T/heads" "$T/git-config"
 printf '#!/usr/bin/env bash\nsleep 3\necho "VERDICT: APPROVE"\n' > "$T/bin/slowlane"; chmod +x "$T/bin/slowlane"
 env -i HOME="$HOME" PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 AGENT_REVIEW_OUT="$T/out" \
     AGENT_REVIEWER=gpt6pro GPT6PRO_BIN="$T/bin/slowlane" bash "$SCRIPT" o/r 1 --post > "$T/log" 2>&1 &
