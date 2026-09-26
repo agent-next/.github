@@ -55,8 +55,8 @@ cat > "$T/bin/devin" <<'EOF'
 # FAKE_DEVIN_LIMITS=<n>: the first n runs hit the free-tier rate limit
 n=$(( $(cat "$T/devin-runs" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$T/devin-runs"
 echo "${0##*/}" >> "$T/devin-bins"
-[ "$n" -le "${FAKE_DEVIN_LIMITS:-0}" ] && { echo "Error: Agent error: Reached free model rate limit. \"retryable\": true"; exit 1; }
-[ "$1 $2 $3 $4" = "--model swe-2-max --sandbox -p" ] || { echo "bad flags: $*"; exit 2; }
+[ "$n" -le "${FAKE_DEVIN_LIMITS:-0}" ] && { echo "Error: Agent error: ${FAKE_DEVIN_LIMIT_MSG:-Reached free model rate limit.} \"retryable\": true"; exit 1; }
+[ "$1 $2 $3 $4" = "--model ${FAKE_DEVIN_MODEL:-swe-2-max} --sandbox -p" ] || { echo "bad flags: $*"; exit 2; }
 for f in pr.txt pr.diff; do [ -f ".agent-review/$f" ] && [ ! -L ".agent-review/$f" ] || { echo "input $f missing or a symlink"; exit 3; }; done
 case "$5" in *"PR metadata: .agent-review/pr.txt. Full diff: .agent-review/pr.diff."*) ;; *) echo "prompt paths not rewritten"; exit 4 ;; esac
 echo "VERDICT: APPROVE"
@@ -112,6 +112,10 @@ run "devin rate limit on every try never counts" 1 "pending|error" AGENT_REVIEWE
 if grep -q "rate limit" "$T/out/"*.md; then PASS=$((PASS+1)); echo "ok   receipt keeps the failed lane's error"; else FAIL=$((FAIL+1)); echo "FAIL receipt lacks the lane error"; fi
 run "rate-limited account rotates to the next account" 0 "pending|success" AGENT_REVIEWER=devin AGENT_REVIEW_DEVIN_BINS="devin devin-b" FAKE_DEVIN_LIMITS=1 AGENT_REVIEW_BACKOFF=0 -- o/r 1 --post
 case "$(paste -sd' ' "$T/devin-bins")" in "devin devin-b") PASS=$((PASS+1)); echo "ok   second account ran right after the limit" ;; *) FAIL=$((FAIL+1)); echo "FAIL account order: $(paste -sd' ' "$T/devin-bins")" ;; esac
+run "account out of weekly quota rotates to the next account" 0 "pending|success" AGENT_REVIEWER=devin AGENT_REVIEW_DEVIN_BINS="devin devin-b" FAKE_DEVIN_LIMITS=1 FAKE_DEVIN_LIMIT_MSG="Your weekly usage quota has been exhausted." AGENT_REVIEW_BACKOFF=0 -- o/r 1 --post
+run "paid devin-sol lane refuses a non-swe-2 writer" 1 "pending|error" AGENT_REVIEWER=devin-sol FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
+run "swe-2 writer skips devin and is reviewed by devin-sol" 0 "pending|success" AGENT_REVIEWER="devin devin-sol" AGENT_WRITER_FAMILY=cognition FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
+case "$(last_desc)" in "devin-sol: approve") PASS=$((PASS+1)); echo "ok   devin-sol verdict is attributed to devin-sol" ;; *) FAIL=$((FAIL+1)); echo "FAIL devin-sol description: $(last_desc)" ;; esac
 run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="devin gpt6pro" FAKE_DEVIN_FAIL=1 -- o/r 1 --post
 case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback verdict comes from the next lane" ;; *) FAIL=$((FAIL+1)); echo "FAIL fallback description: $(last_desc)" ;; esac
 
