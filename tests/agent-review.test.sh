@@ -18,6 +18,8 @@ case "$args" in
     if [ "$n" -gt 1 ] && [ -n "${FAKE_NEW_HEAD:-}" ]; then echo "$FAKE_NEW_HEAD"; else echo "$FAKE_HEAD"; fi ;;
   "api -X POST "*"/statuses/"*)
     state=${args#*state=}; state=${state%% *}; desc=${args#*description=}
+    # FAKE_STATUS_FAIL=<state>: that post fails once (not recorded), as a transient API error would
+    if [ "${FAKE_STATUS_FAIL:-}" = "$state" ] && [ ! -e "$T/failed-once" ]; then touch "$T/failed-once"; echo "HTTP 502" >&2; exit 1; fi
     echo "$state|$desc" >> "$T/statuses" ;;
   *"--json title"*) echo "TITLE: test" ;;
   *"--json commits"*) echo "COMMITS:" ;;
@@ -62,8 +64,9 @@ PASS=0; FAIL=0
 run(){
   local name=$1 want_rc=$2 want=$3; shift 3
   local envs=(); while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
-  rm -f "$T/statuses" "$T/heads"
-  env PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 \
+  rm -f "$T/statuses" "$T/heads" "$T/failed-once"
+  # start from a clean environment so caller-exported AGENT_*/FAKE_* values cannot leak in
+  env -i HOME="$HOME" PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 \
       AGENT_REVIEW_OUT="$T/out" AGENT_REVIEWER=gpt6pro GPT6PRO_BIN="$T/bin/lane" \
       FAKE_REPLY='findings\nVERDICT: APPROVE' "${envs[@]}" \
       bash "$SCRIPT" "$@" > "$T/log" 2>&1
@@ -76,6 +79,8 @@ last_desc(){ tail -1 "$T/statuses" | cut -d'|' -f2-; }
 run "usage without args" 64 "" --
 run "approve posts pending then success" 0 "pending|success" -- o/r 1 --post
 run "dry run posts nothing" 0 "" -- o/r 1
+run "failed success post falls back to error, never stale pending" 1 "pending|error" FAKE_STATUS_FAIL=success -- o/r 1 --post
+run "failed failure post falls back to error" 1 "pending|error" FAKE_STATUS_FAIL=failure FAKE_REPLY='VERDICT: REQUEST_CHANGES' -- o/r 1 --post
 run "request changes posts failure" 1 "pending|failure" FAKE_REPLY='VERDICT: REQUEST_CHANGES' -- o/r 1 --post
 run "crashed lane never counts, even with a verdict" 1 "pending|error" FAKE_RC=1 -- o/r 1 --post
 run "no verdict posts error" 1 "pending|error" FAKE_REPLY='I could not finish' -- o/r 1 --post
@@ -100,7 +105,7 @@ case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback
 # SIGTERM (outer timeout, CI cancel) during the review must not leave pending behind
 rm -f "$T/statuses" "$T/heads"
 printf '#!/usr/bin/env bash\nsleep 3\necho "VERDICT: APPROVE"\n' > "$T/bin/slowlane"; chmod +x "$T/bin/slowlane"
-env PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 AGENT_REVIEW_OUT="$T/out" \
+env -i HOME="$HOME" PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 AGENT_REVIEW_OUT="$T/out" \
     AGENT_REVIEWER=gpt6pro GPT6PRO_BIN="$T/bin/slowlane" bash "$SCRIPT" o/r 1 --post > "$T/log" 2>&1 &
 pid=$!; sleep 1; kill -TERM "$pid"; wait "$pid"; rc=$?
 got=$(cut -d'|' -f1 "$T/statuses" 2>/dev/null | paste -sd'|' -)
