@@ -54,6 +54,7 @@ cat > "$T/bin/devin" <<'EOF'
 [ "${FAKE_DEVIN_FAIL:-}" ] && { echo "devin: simulated failure"; exit 1; }
 # FAKE_DEVIN_LIMITS=<n>: the first n runs hit the free-tier rate limit
 n=$(( $(cat "$T/devin-runs" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$T/devin-runs"
+echo "${0##*/}" >> "$T/devin-bins"
 [ "$n" -le "${FAKE_DEVIN_LIMITS:-0}" ] && { echo "Error: Agent error: Reached free model rate limit. \"retryable\": true"; exit 1; }
 [ "$1 $2 $3 $4" = "--model swe-2-max --sandbox -p" ] || { echo "bad flags: $*"; exit 2; }
 for f in pr.txt pr.diff; do [ -f ".agent-review/$f" ] && [ ! -L ".agent-review/$f" ] || { echo "input $f missing or a symlink"; exit 3; }; done
@@ -61,13 +62,15 @@ case "$5" in *"PR metadata: .agent-review/pr.txt. Full diff: .agent-review/pr.di
 echo "VERDICT: APPROVE"
 EOF
 chmod +x "$T/bin/"*
+# a second account that is never rate-limited, and the shim renamed so only the named bin can run
+cp "$T/bin/devin" "$T/bin/devin-b"
 
 PASS=0; FAIL=0
 # run <name> <expected rc> <expected statuses "state|state|..."> <env...> -- <script args...>
 run(){
   local name=$1 want_rc=$2 want=$3; shift 3
   local envs=(); while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
-  rm -f "$T/statuses" "$T/heads" "$T/failed-once" "$T/devin-runs"
+  rm -f "$T/statuses" "$T/heads" "$T/failed-once" "$T/devin-runs" "$T/devin-bins"
   # start from a clean environment so caller-exported AGENT_*/FAKE_* values cannot leak in
   env -i HOME="$HOME" PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 \
       AGENT_REVIEW_OUT="$T/out" AGENT_REVIEWER=gpt6pro GPT6PRO_BIN="$T/bin/lane" \
@@ -107,6 +110,8 @@ case "$(cat "$T/victim")" in "do not overwrite") PASS=$((PASS+1)); echo "ok   pl
 run "devin rate limit is retried, then reviews" 0 "pending|success" AGENT_REVIEWER=devin FAKE_DEVIN_LIMITS=2 AGENT_REVIEW_BACKOFF=0 -- o/r 1 --post
 run "devin rate limit on every try never counts" 1 "pending|error" AGENT_REVIEWER=devin FAKE_DEVIN_LIMITS=9 AGENT_REVIEW_BACKOFF=0 -- o/r 1 --post
 if grep -q "rate limit" "$T/out/"*.md; then PASS=$((PASS+1)); echo "ok   receipt keeps the failed lane's error"; else FAIL=$((FAIL+1)); echo "FAIL receipt lacks the lane error"; fi
+run "rate-limited account rotates to the next account" 0 "pending|success" AGENT_REVIEWER=devin AGENT_REVIEW_DEVIN_BINS="devin devin-b" FAKE_DEVIN_LIMITS=1 AGENT_REVIEW_BACKOFF=0 -- o/r 1 --post
+case "$(paste -sd' ' "$T/devin-bins")" in "devin devin-b") PASS=$((PASS+1)); echo "ok   second account ran right after the limit" ;; *) FAIL=$((FAIL+1)); echo "FAIL account order: $(paste -sd' ' "$T/devin-bins")" ;; esac
 run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="devin gpt6pro" FAKE_DEVIN_FAIL=1 -- o/r 1 --post
 case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback verdict comes from the next lane" ;; *) FAIL=$((FAIL+1)); echo "FAIL fallback description: $(last_desc)" ;; esac
 
