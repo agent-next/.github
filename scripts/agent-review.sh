@@ -103,8 +103,9 @@ Review directly with file reads and read-only git commands; do not invoke skills
     timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
   ccz) # --model pins glm-5.3; an inherited CCZ_TIER (ccz's tier selector) is dropped so it cannot pick a model that
     # must not see private code. The runner's own CLAUDE.md files are disabled: host instructions (e.g. "answer in
-    # Chinese") made long reviews end without the English VERDICT line, which then never counts.
-    (cd "$WORK/src" && env -u CCZ_TIER CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${CCZ_BIN:-ccz}" --model glm-5.3 --add-dir "$WORK" -p "$PROMPT
+    # Chinese") made long reviews end without the English VERDICT line, which then never counts. --safe-mode also
+    # drops hooks, MCP servers, skills and plugins, so a PR shipping .claude/settings.json cannot run commands here.
+    (cd "$WORK/src" && env -u CCZ_TIER CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${CCZ_BIN:-ccz}" --safe-mode --model glm-5.3 --add-dir "$WORK" -p "$PROMPT
 Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
 esac; }
 REVIEWER=none; VERDICT=
