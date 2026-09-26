@@ -75,6 +75,7 @@ EOF
 cat > "$T/bin/ccz" <<'EOF'
 #!/usr/bin/env bash
 [ -z "${CCZ_TIER+x}" ] || { echo "CCZ_TIER leaked: $CCZ_TIER"; exit 5; }
+[ "${CLAUDE_CODE_DISABLE_CLAUDE_MDS:-}" = 1 ] || { echo "host CLAUDE.md files would steer the reviewer"; exit 6; }
 [ "$1 $2 $3" = "--model glm-5.3 --add-dir" ] || { echo "bad flags: $*"; exit 2; }
 [ -f "$4/pr.txt" ] && [ -f "$4/pr.diff" ] || { echo "review inputs not reachable via --add-dir: $4"; exit 4; }
 case " $* " in *" -p "*) ;; *) echo "not headless"; exit 3 ;; esac
