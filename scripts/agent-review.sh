@@ -25,7 +25,7 @@ REC="$OUT/$(echo "$R" | tr / _)-pr$PR-${HEAD:0:7}.md"
 status(){ [ "$POST" = --post ] || return 0
   net gh api -X POST "repos/$R/statuses/$HEAD" -f state="$1" -f context=agent-review -f description="$2" >/dev/null; }
 
-status pending "review running"; STATE=pending
+STATE=pending; status pending "review running"   # pending first: a post killed after GitHub recorded it still gets overwritten by cleanup
 # https + gh credential helper: works for private repos and does not depend on ssh
 SLOW=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120)
 net git "${SLOW[@]}" -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "https://github.com/$R.git" "$WORK/src"

@@ -106,6 +106,7 @@ run "clone failure after pending posts error" 128 "pending|error" FAKE_CLONE_FAI
 run "hung clone hits the network timeout and posts error" 124 "pending|error" FAKE_CLONE_HANG=1 AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
 run "hung fetch hits the network timeout and posts error" 124 "pending|error" FAKE_FETCH_HANG=1 AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
 run "hung checkout hits the network timeout and posts error" 124 "pending|error" FAKE_CHECKOUT_HANG=1 AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
+run "hung pending post is overwritten by error, never left pending" 124 "error" FAKE_GH_HANG='*state=pending*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
 run "hung head lookup exits before any status" 124 "" FAKE_GH_HANG='*--json headRefOid*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
 run "hung diff download hits the network timeout and posts error" 124 "pending|error" FAKE_GH_HANG='pr diff*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
 run "hung error post in the cleanup trap still exits" 128 "pending" FAKE_CLONE_FAIL=1 FAKE_GH_HANG='*state=error*' AGENT_REVIEW_NET_TIMEOUT=2 -- o/r 1 --post
