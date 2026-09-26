@@ -60,12 +60,18 @@ review_with(){ case "$1" in
     # into a directory created fresh here, so cp never writes through a PR-controlled path.
     { rm -rf "$WORK/src/.agent-review" && mkdir "$WORK/src/.agent-review" &&
       cp "$WORK/pr.txt" "$WORK/pr.diff" "$WORK/src/.agent-review/"; } || { echo "LANE_INELIGIBLE: cannot stage review inputs"; return 65; }
-    # the free tier returns a retryable rate limit when other sessions share the account; back off and rerun
+    # the free tier returns a retryable rate limit when other sessions share an account: rotate through
+    # AGENT_REVIEW_DEVIN_BINS (same CLI, other accounts, same pinned model), then back off and rerun
+    local drc bin
     for try in 1 2 3; do
-      (cd "$WORK/src" && timeout "$LANE_TIMEOUT" devin --model swe-2-max --sandbox -p "${PROMPT//$WORK\//.agent-review/}
+      for bin in ${AGENT_REVIEW_DEVIN_BINS:-devin}; do
+        (cd "$WORK/src" && timeout "$LANE_TIMEOUT" "$bin" --model swe-2-max --sandbox -p "${PROMPT//$WORK\//.agent-review/}
 Review directly with file reads and read-only git commands; do not invoke skills or subagents.") > "$WORK/devin-try.txt" 2>&1 && { cat "$WORK/devin-try.txt"; return 0; }
-      local drc=$?   # local: the caller's lane loop owns rc
-      if ! grep -q "rate limit" "$WORK/devin-try.txt" || [ "$try" -eq 3 ]; then cat "$WORK/devin-try.txt"; return "$drc"; fi
+        drc=$?   # local: the caller's lane loop owns rc
+        grep -q "rate limit" "$WORK/devin-try.txt" || { cat "$WORK/devin-try.txt"; return "$drc"; }
+        echo "devin account $bin rate-limited (try $try)" >&2
+      done
+      [ "$try" -eq 3 ] && { cat "$WORK/devin-try.txt"; return "$drc"; }
       sleep "${AGENT_REVIEW_BACKOFF:-120}"
     done ;;
   gpt6pro)
