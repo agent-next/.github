@@ -59,6 +59,12 @@ declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [devin-sol]=openai 
 # devin-sol is paid (owner decision 2026-09-26) and only reviews PRs written by devin's own swe-2 family.
 declare -A DEVIN_MODEL=([devin]=swe-2-max [devin-sol]=gpt-6-sol-high)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
+# normalize (case, spaces) and allow only known families: a typo must fail closed, never let a writer's family review
+WRITER_FAMILY=$(printf '%s' "$WRITER_FAMILY" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+for f in ${WRITER_FAMILY//,/ }; do
+  [[ " anthropic ${FAMILY[*]} " == *" $f "* ]] || { echo "unknown writer family '$f' in AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
+done
+[ -n "${WRITER_FAMILY//,/}" ] || { echo "empty AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
 GPT6PRO=${GPT6PRO_BIN:-gpt6pro}
 # gpt6pro hands the prompt to its model client in one env string, capped at 128 KiB by Linux
 INLINE_MAX=120000
@@ -93,14 +99,15 @@ Review directly with file reads and read-only git commands; do not invoke skills
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
     [ "$(wc -c < "$WORK/gpt6pro-prompt.txt")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: prompt larger than $INLINE_MAX bytes"; return 65; }
     timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
-  ccz) # pinned to glm-5.3: an inherited CCZ_TIER could select a model that must not see private code
+  ccz) # --model pins glm-5.3; an inherited CCZ_TIER (ccz's tier selector) is dropped so it cannot pick a model that
+    # must not see private code
     (cd "$WORK/src" && env -u CCZ_TIER timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${CCZ_BIN:-ccz}" --model glm-5.3 --add-dir "$WORK" -p "$PROMPT
 Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
 esac; }
 REVIEWER=none; VERDICT=
 for LANE in ${AGENT_REVIEWER:-grok agy devin devin-sol gpt6pro ccz}; do
   [ -n "${FAMILY[$LANE]:-}" ] || { echo "unknown reviewer lane $LANE" >&2; exit 64; }
-  [[ ",$WRITER_FAMILY," != *",${FAMILY[$LANE]},"* ]] || { echo "skip $LANE: same family as a writer ($WRITER_FAMILY)" >&2; continue; }
+  [[ ",$WRITER_FAMILY," != *",${FAMILY[$LANE]},"* ]] || { echo "skip $LANE: same family as a writer ($WRITER_FAMILY)" | tee -a "$WORK/lanes.txt" >&2; continue; }
   rc=0; review_with "$LANE" > "$WORK/review-$LANE.txt" 2>&1 || rc=$?
   V=$(grep -oE "VERDICT: (APPROVE|REQUEST_CHANGES)" "$WORK/review-$LANE.txt" | tail -1 | cut -d" " -f2 || true)
   if [ "$rc" -eq 0 ] && [ -n "$V" ]; then REVIEWER=$LANE; VERDICT=$V; cp "$WORK/review-$LANE.txt" "$WORK/review.txt"; break; fi

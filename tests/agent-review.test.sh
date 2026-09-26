@@ -75,7 +75,8 @@ EOF
 cat > "$T/bin/ccz" <<'EOF'
 #!/usr/bin/env bash
 [ -z "${CCZ_TIER+x}" ] || { echo "CCZ_TIER leaked: $CCZ_TIER"; exit 5; }
-[ "$1 $2" = "--model glm-5.3" ] || { echo "bad flags: $*"; exit 2; }
+[ "$1 $2 $3" = "--model glm-5.3 --add-dir" ] || { echo "bad flags: $*"; exit 2; }
+[ -f "$4/pr.txt" ] && [ -f "$4/pr.diff" ] || { echo "review inputs not reachable via --add-dir: $4"; exit 4; }
 case " $* " in *" -p "*) ;; *) echo "not headless"; exit 3 ;; esac
 echo "VERDICT: APPROVE"
 EOF
@@ -149,6 +150,11 @@ case "$(last_desc)" in "devin-sol: approve") PASS=$((PASS+1)); echo "ok   devin-
 run "ccz stand-in: pinned model, inherited CCZ_TIER dropped" 0 "pending|success" AGENT_REVIEWER=ccz CCZ_TIER=some-other-tier -- o/r 1 --post
 case "$(last_desc)" in "ccz: approve") PASS=$((PASS+1)); echo "ok   ccz verdict is attributed to ccz" ;; *) FAIL=$((FAIL+1)); echo "FAIL ccz description: $(last_desc)" ;; esac
 run "every family in a writer list is refused" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY=cognition,zai -- o/r 1 --post
+if grep -q "skip devin: same family" "$T/out/"*.md; then PASS=$((PASS+1)); echo "ok   receipt records why a lane was skipped"; else FAIL=$((FAIL+1)); echo "FAIL receipt lacks the skip reason"; fi
+run "writer list with spaces and capitals still refuses every family" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY="Anthropic, Cognition , ZAI" -- o/r 1 --post
+run "misspelled writer family fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=cognitoin -- o/r 1 --post
+case "$(last_desc)" in "unknown writer family") PASS=$((PASS+1)); echo "ok   unknown family names the reason" ;; *) FAIL=$((FAIL+1)); echo "FAIL unknown family description: $(last_desc)" ;; esac
+run "empty writer list fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=", ," -- o/r 1 --post
 run "mixed writer list with cognition still opens devin-sol" 0 "pending|success" AGENT_REVIEWER=devin-sol AGENT_WRITER_FAMILY=anthropic,cognition FAKE_DEVIN_MODEL=gpt-6-sol-high -- o/r 1 --post
 run "failed lane falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="devin gpt6pro" FAKE_DEVIN_FAIL=1 -- o/r 1 --post
 case "$(last_desc)" in "gpt6pro: approve") PASS=$((PASS+1)); echo "ok   fallback verdict comes from the next lane" ;; *) FAIL=$((FAIL+1)); echo "FAIL fallback description: $(last_desc)" ;; esac
