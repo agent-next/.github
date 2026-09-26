@@ -6,6 +6,7 @@
 # tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
 # Reviewer chain: grok -> agy -> devin -> devin-sol -> gpt6pro -> ccz (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
+set -f   # no pathname expansion anywhere: unquoted env lists (lanes, accounts, families) must never match files
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
 OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
@@ -61,10 +62,11 @@ declare -A DEVIN_MODEL=([devin]=swe-2-max [devin-sol]=gpt-6-sol-high)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
 # normalize (case, spaces) and allow only known families: a typo must fail closed, never let a writer's family review
 WRITER_FAMILY=$(printf '%s' "$WRITER_FAMILY" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
-for f in ${WRITER_FAMILY//,/ }; do
-  [[ " anthropic ${FAMILY[*]} " == *" $f "* ]] || { echo "unknown writer family '$f' in AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
+[ -n "${WRITER_FAMILY//,/}" ] || { echo "empty AGENT_WRITER_FAMILY" >&2; ABORT="empty writer family"; exit 64; }
+IFS=, read -ra WRITERS <<< "$WRITER_FAMILY"   # split without pathname expansion: a * must not match files
+for f in "${WRITERS[@]}"; do
+  [[ "$f" =~ ^[a-z0-9-]+$ && " anthropic ${FAMILY[*]} " == *" $f "* ]] || { echo "unknown writer family '$f' in AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
 done
-[ -n "${WRITER_FAMILY//,/}" ] || { echo "empty AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
 GPT6PRO=${GPT6PRO_BIN:-gpt6pro}
 # gpt6pro hands the prompt to its model client in one env string, capped at 128 KiB by Linux
 INLINE_MAX=120000
