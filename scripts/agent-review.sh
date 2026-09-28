@@ -4,7 +4,7 @@
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
 # tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
-# Reviewer chain: grok -> agy -> devin -> devin-sol -> gpt6pro -> ccz (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
+# Reviewer chain: grok -> agy -> devin -> gpt6pro -> ccz (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 set -f   # no pathname expansion anywhere: unquoted env lists (lanes, accounts, families) must never match files
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
@@ -51,14 +51,13 @@ Run the repo's own check command if cheap (see AGENTS.md / Makefile). Do not mod
 Output: a findings list, each with file:line, severity (blocker/major/minor/nit) and evidence.
 Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 (REQUEST_CHANGES iff any blocker or major; AI-attribution text and broken links are always major)."
-# Reviewer chain (owner decisions 2026-09-25/26): grok -> agy -> devin -> devin-sol -> gpt6pro -> ccz. Each lane is a different
+# Reviewer chain (owner decisions 2026-09-25/26/28): grok -> agy -> devin -> gpt6pro -> ccz. Each lane is a different
 # model family; a lane whose family is one of the writers' ($AGENT_WRITER_FAMILY, comma-separated, default anthropic) is
 # refused. ccz (GLM on z.ai) is the stand-in when no frontier lane is healthy; its verdict is labelled ccz on the status.
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
-declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [devin-sol]=openai [gpt6pro]=openai [ccz]=zai)
-# the devin CLI runs several vendors' models; each devin lane pins one so the family map holds.
-# devin-sol is paid (owner decision 2026-09-26) and only reviews PRs written by devin's own swe-2 family.
-declare -A DEVIN_MODEL=([devin]=swe-2-max [devin-sol]=gpt-6-sol-high)
+declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai [ccz]=zai)
+# the devin CLI runs several vendors' models; the devin lane runs only swe-2 (owner decision 2026-09-28).
+declare -A DEVIN_MODEL=([devin]=swe-2-max)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
 # normalize (case, spaces) and allow only known families: a typo must fail closed, never let a writer's family review
 WRITER_FAMILY=$(printf '%s' "$WRITER_FAMILY" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
@@ -75,13 +74,12 @@ LANE_TIMEOUT=${AGENT_REVIEW_TIMEOUT:-1800}
 review_with(){ case "$1" in
   grok) (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
   agy)  (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
-  devin|devin-sol) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too. The checkout
+  devin) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too. The checkout
     # is untrusted: drop anything the PR put at .agent-review (e.g. a symlink out of the tree) and stage
     # into a directory created fresh here, so cp never writes through a PR-controlled path.
-    [ "$1" = devin ] || [[ ",$WRITER_FAMILY," == *,cognition,* ]] || { echo "LANE_INELIGIBLE: paid lane $1 only reviews swe-2-written PRs"; return 65; }
     { rm -rf "$WORK/src/.agent-review" && mkdir "$WORK/src/.agent-review" &&
       cp "$WORK/pr.txt" "$WORK/pr.diff" "$WORK/src/.agent-review/"; } || { echo "LANE_INELIGIBLE: cannot stage review inputs"; return 65; }
-    # an account can be rate-limited (free tier, shared) or out of weekly paid quota: rotate through
+    # an account can be rate-limited (free tier, shared) or out of its weekly quota: rotate through
     # AGENT_REVIEW_DEVIN_BINS (same CLI, other accounts, same pinned model), then back off and rerun
     local drc bin
     for try in 1 2 3; do
@@ -109,7 +107,7 @@ Review directly with file reads and read-only git commands; do not invoke skills
 Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
 esac; }
 REVIEWER=none; VERDICT=
-for LANE in ${AGENT_REVIEWER:-grok agy devin devin-sol gpt6pro ccz}; do
+for LANE in ${AGENT_REVIEWER:-grok agy devin gpt6pro ccz}; do
   [ -n "${FAMILY[$LANE]:-}" ] || { echo "unknown reviewer lane $LANE" >&2; exit 64; }
   [[ ",$WRITER_FAMILY," != *",${FAMILY[$LANE]},"* ]] || { echo "skip $LANE: same family as a writer ($WRITER_FAMILY)" | tee -a "$WORK/lanes.txt" >&2; continue; }
   rc=0; review_with "$LANE" > "$WORK/review-$LANE.txt" 2>&1 || rc=$?
