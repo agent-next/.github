@@ -6,6 +6,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)[^)]*\)")
+REFDEF = re.compile(r"^ {0,3}\[[^\]]+\]:\s*<?([^\s>]+)")
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 errors = []
 
 head = (ROOT / "AGENT-STANDARD.md").read_text().splitlines()[0]
@@ -13,23 +15,29 @@ if not re.fullmatch(r"# .+ — v\d+\.\d+\.\d+", head):
     errors.append(f"AGENT-STANDARD.md: first line is not a '# <title> — vX.Y.Z' header: {head!r}")
 
 agents = ROOT / "AGENTS.md"
-if agents.read_text().count("\n") > 90:
+if len(agents.read_text().splitlines()) > 90:
     errors.append("AGENTS.md exceeds 90 lines")
 
 for md in sorted(ROOT.rglob("*.md")):
     if ".git" in md.relative_to(ROOT).parts or ".worktrees" in md.relative_to(ROOT).parts:
         continue
-    in_fence = False
+    fence = None  # (char, length) of the open fence
     for n, line in enumerate(md.read_text().splitlines(), 1):
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
-        if in_fence:
+        m = FENCE.match(line)
+        if fence:
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and not m.group(2).strip():
+                fence = None
             continue
-        for target in LINK.findall(line):
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            fence = (m.group(1)[0], len(m.group(1)))
+            continue
+        ref = REFDEF.match(line)
+        for target in ([ref.group(1)] if ref else []) + LINK.findall(line):
             if re.match(r"[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
                 continue
-            path = (md.parent / target.split("#")[0]).resolve()
-            if not path.exists():
+            if target.startswith("/"):
+                errors.append(f"{md.relative_to(ROOT)}:{n}: absolute link {target} (not repo-relative)")
+            elif not (md.parent / target.split("#")[0]).resolve().exists():
                 errors.append(f"{md.relative_to(ROOT)}:{n}: broken link {target}")
 
 for e in errors:
