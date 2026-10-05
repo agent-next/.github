@@ -34,8 +34,9 @@ no network, no GPU. Run it before every PR.
   in any file.
 - Do not edit `AGENT-STANDARD.md` content without owner approval; a version bump accompanies
   any approved change.
-- GitHub's supported community health files here act as defaults for org repos that lack
-  their own; other files (scripts, Makefile, profile) do not propagate. Keep edits minimal.
+- Root `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md` and `PULL_REQUEST_TEMPLATE.md`
+  are org-wide defaults for repos without their own. Issue templates and `FUNDING.yml` only
+  propagate from a `.github/` folder, so the root copies here do not. Other files never do.
 - No workflows exist yet; adding CI or changing the gate scripts needs an independent review.
 
 ## Done
