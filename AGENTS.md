@@ -34,7 +34,8 @@ no network, no GPU. Run it before every PR.
   in any file.
 - Do not edit `AGENT-STANDARD.md` content without owner approval; a version bump accompanies
   any approved change.
-- Files here apply to every org repo; keep edits minimal and re-check links.
+- GitHub's supported community health files here act as defaults for org repos that lack
+  their own; other files (scripts, Makefile, profile) do not propagate. Keep edits minimal.
 - No workflows exist yet; adding CI or changing the gate scripts needs an independent review.
 
 ## Done
