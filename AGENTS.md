@@ -17,15 +17,15 @@ Default branch: `main`. Docs-only apart from the shell scripts.
   `CODE_OF_CONDUCT.md`, `CODEOWNERS`, `FUNDING.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`.
 - `scripts/agent-review.sh`, `scripts/agent-merge.sh`: the `agent-review` status poster and the
   gate-checking merger. Tests are hermetic (gh, git and lanes are shims): `tests/*.test.sh`.
-- `scripts/check-docs.py`: docs gate (version header, relative links, AGENTS.md length).
 
 ## Setup
 
-None. `make setup` is a no-op echo. Needs `python3` and `bash` only.
+None. `make setup` is a no-op echo.
 
 ## Check
 
-`make check` runs the docs gate and both script test suites. Non-interactive, no secrets,
+`make check` runs the hermetic test suites of both merge-gate scripts
+(`tests/agent-merge.test.sh`, `tests/agent-review.test.sh`). Non-interactive, no secrets,
 no network, no GPU. Run it before every PR.
 
 ## Boundaries
