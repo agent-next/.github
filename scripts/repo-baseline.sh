@@ -13,7 +13,7 @@
 # ok, and an unknown required check fails the audit — the audit never passes on missing evidence.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-[ $# -ge 1 ] || { sed -n '3,5p' "$0" >&2; exit 64; }
+[ $# -ge 1 ] || { sed -n '7,9p' "$0" >&2; exit 64; }
 CMD=$1; shift
 ORG=agent-next; REPOS=(); JSON=no; APPLY=no
 while [ $# -ge 1 ]; do case $1 in
