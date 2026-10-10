@@ -182,9 +182,8 @@ ruleset_checks(){
     det=$(cat "$TMP/rs")
     inc=$(jq -r '(.conditions.ref_name.include // []) | join(",")' <<<"$det")
     exc=$(jq -r '(.conditions.ref_name.exclude // []) | join(",")' <<<"$det")
-    if jq -e --arg t "$target" --arg i "$([ "$target" = branch ] && echo '~ALL' || echo 'refs/tags/*')" '
-         .target == $t and .enforcement == "active"
-         and ((.conditions.ref_name.include // []) | index($i) != null)
+    if jq -e --arg t "$target" '.target == $t and .enforcement == "active"
+         and ((.conditions.ref_name.include // []) | index("~ALL") != null)
          and ((.bypass_actors // []) | length >= 1)
          and (if $t == "branch"
               then ((.conditions.ref_name.exclude // [])

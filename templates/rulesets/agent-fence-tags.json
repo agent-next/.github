@@ -2,7 +2,7 @@
   "name": "agent-fence-tags",
   "enforcement": "active",
   "target": "tag",
-  "conditions": { "ref_name": { "include": ["refs/tags/*"], "exclude": [] } },
+  "conditions": { "ref_name": { "include": ["~ALL"], "exclude": [] } },
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },

@@ -5,6 +5,10 @@ here is applied by any script — `scripts/repo-baseline.sh plan-rulesets --repo
 them with the repo's default branch filled in. Creating or changing rulesets is an owner-gated
 action (AGENT-STANDARD.md, Hard limits).
 
+Both fences target `~ALL` and carve agent refs out of the exclude list — they fence everything
+except `sbx/**` (sandbox pushes never hit the fence) and the bot/dependabot branches, so the
+default branch is left to `agent-default-branch` alone.
+
 Before using one, the operator fills in:
 
 - `bypass_actors`: the placeholder `actor_id: 0` must become the bot App's real actor id (or a
