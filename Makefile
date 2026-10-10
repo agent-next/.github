@@ -6,3 +6,4 @@ setup:
 check:
 	bash tests/agent-merge.test.sh
 	bash tests/agent-review.test.sh
+	bash tests/repo-baseline.test.sh
