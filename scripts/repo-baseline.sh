@@ -9,8 +9,9 @@
 #        repo-baseline.sh plan-rulesets --repo NAME
 # tests: bash tests/repo-baseline.test.sh (hermetic; gh is a shim)
 # Trust: rulesets, classic branch protection, visibility and paid add-ons are owner-gated; this
-# tool never writes them. An endpoint the token may not read (403) is reported "unknown", never
-# ok, and an unknown required check fails the audit — the audit never passes on missing evidence.
+# tool never writes them. An endpoint the token may not read (403), or an admin-only field the
+# repo GET omits for it (security_and_analysis), is reported "unknown", never ok, and an unknown
+# required check fails the audit — the audit never passes on missing evidence.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ $# -ge 1 ] || { sed -n '7,9p' "$0" >&2; exit 64; }
@@ -38,12 +39,6 @@ api(){ # api <path>: GET, body on stdout; on failure sets ERR (404|403|network) 
 api_flag(){ # api_flag <path>: an endpoint whose whole meaning is its status (204 on, 404 off)
   api "$1" >/dev/null || { if [ "$ERR" = 404 ]; then echo disabled; else echo "unknown ($ERR)"; fi; return 0; }
   echo enabled
-}
-api_opt(){ # api_opt <path>: an endpoint whose body carries {"status": "enabled"|"disabled"}
-  if ! api "$1" > "$TMP/body"; then
-    if [ "$ERR" = 404 ]; then echo disabled; else echo "unknown ($ERR)"; fi; return 0
-  fi
-  if [ "$(jq -r '.status // "unknown"' < "$TMP/body")" = enabled ]; then echo enabled; else echo disabled; fi
 }
 file_body(){ # file_body <path>: file content at the tip of the default branch, or absent | unknown (…)
   if ! api "repos/$ORG/$R/contents/$1?ref=$BRANCH" > "$TMP/body"; then
@@ -133,10 +128,14 @@ probe_settings(){ # prints one "S<n>|ok|reason", "|fix|reason", "|n/a|reason" or
   if [ "$(jq -r .private <<<"$META")" = true ]; then
     echo "S6|n/a|private repo: secret scanning is a paid add-on and an owner money gate"
   else
-    ss=$(api_opt "repos/$ORG/$R/secret-scanning"); pp=$(api_opt "repos/$ORG/$R/secret-scanning/push-protection")
+    # S6 rides the repo GET already loaded: there is no secret-scanning REST endpoint, the
+    # statuses are fields of repos/{o}/{r}. GitHub serves security_and_analysis to admins
+    # only, so an absent object means unverifiable — unknown, never ok
+    ss=$(jq -r '.security_and_analysis.secret_scanning.status // "absent"' <<<"$META")
+    pp=$(jq -r '.security_and_analysis.secret_scanning_push_protection.status // "absent"' <<<"$META")
     case "$ss $pp" in
       "enabled enabled") echo "S6|ok|" ;;
-      *unknown*)         echo "S6|unknown|secret scanning=$ss, push protection=$pp" ;;
+      *absent*)          echo "S6|unknown|repo GET carries no security_and_analysis (token lacks admin read): secret scanning=$ss, push protection=$pp" ;;
       *)                 echo "S6|fix|secret scanning=$ss, push protection=$pp" ;;
     esac
   fi
@@ -238,12 +237,15 @@ apply-settings)
   call(){ if [ "$APPLY" = yes ]; then
             ghc api -X "$1" "$2" "${@:3}" >/dev/null && echo "applied $1 $2 ${*:3}" || echo "FAILED  $1 $2 ${*:3}"
           else echo "would  $1 $2 ${*:3}"; fi; }
+  call_json(){ # call_json <method> <url> <json>: like call, but the body is raw JSON on stdin
+    if [ "$APPLY" = yes ]; then
+      ghc api -X "$1" "$2" --input - <<<"$3" >/dev/null && echo "applied $1 $2 $3" || echo "FAILED  $1 $2 $3"
+    else echo "would  $1 $2 $3"; fi; }
   while IFS='|' read -r s st why; do case "$s:$st" in
     S3:fix) call PATCH "repos/$ORG/$R" -F delete_branch_on_merge=true ;;
     S4:fix) call PATCH "repos/$ORG/$R" -F has_wiki=false ;;
     S5:fix) call PUT "repos/$ORG/$R/vulnerability-alerts"; call PUT "repos/$ORG/$R/automated-security-fixes" ;;
-    S6:fix) call PATCH "repos/$ORG/$R/secret-scanning" -F state=enabled
-             call PATCH "repos/$ORG/$R/secret-scanning/push-protection" -F status=enabled ;;
+    S6:fix) call_json PATCH "repos/$ORG/$R" '{"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}' ;;
   esac
   { [ "$st" != fix ] && echo "skip   $s: $st${why:+ ($why)}"; } || true
   done < <(probe_settings)

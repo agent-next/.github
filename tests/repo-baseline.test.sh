@@ -184,9 +184,9 @@ rm -rf "$T/fx/fixme"; cp -r "$T/fx/good" "$T/fx/fixme"
 ( cd "$T/fx/fixme" && jq '.delete_branch_on_merge=false | .has_wiki=true | .security_and_analysis.secret_scanning.status="disabled"' repo > r && mv r repo &&
   echo 404 > ep.vulnerability-alerts )
 run_cli 0 apply-settings --repo fixme
-if [ ! -e "$T/calls" ] && grep -qF "^would  PATCH repos/agent-next/fixme -F delete_branch_on_merge=true" "$T/log" \
-   && grep -qF "^would  PUT repos/agent-next/fixme/vulnerability-alerts" "$T/log" \
-   && grep -qF "^would  PATCH repos/agent-next/fixme $S6BODY" "$T/log"; then PASS=$((PASS+1)); echo "ok   apply-settings dry run: zero mutating calls, calls printed"
+if [ ! -e "$T/calls" ] && grep -q "^would  PATCH repos/agent-next/fixme -F delete_branch_on_merge=true" "$T/log" \
+   && grep -q "^would  PUT repos/agent-next/fixme/vulnerability-alerts" "$T/log" \
+   && grep -qF "would  PATCH repos/agent-next/fixme $S6BODY" "$T/log"; then PASS=$((PASS+1)); echo "ok   apply-settings dry run: zero mutating calls, calls printed"
 else FAIL=$((FAIL+1)); echo "FAIL dry run:"; sed 's/^/     /' "$T/log"; [ -e "$T/calls" ] && cat "$T/calls"; fi
 
 run_cli 0 apply-settings --repo fixme --apply
