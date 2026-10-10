@@ -1,4 +1,4 @@
-# agent-next agent standard — v0.2.0
+# agent-next agent standard — v0.3.0
 
 ## Scope
 
@@ -58,10 +58,12 @@ These apply even under elevated-permission modes:
 - The gate is declared server-side (org ruleset plus per-repo required CI checks), not by
   convention. Changing it is an owner-gated action.
 
-## Repo baseline (v0.1.0)
+## Repo baseline (v0.2.0)
 
-Every active repo carries this per-repo baseline (v0.1.0, 2026-09-24); this section is its
+Every active repo carries this per-repo baseline (v0.2.0, 2026-10-10); this section is its
 complete definition:
+
+Files on the default branch:
 
 1. **AGENTS.md** (required, <=90 lines): repo guide with Purpose, Orient, Setup,
    Check, Boundaries, Done sections; links to this file; only verified facts.
@@ -75,6 +77,23 @@ complete definition:
 6. **Dev environment**: minimal `.devcontainer` with official image and
    `postCreateCommand: make setup`; skipped for docs-only repos.
 
+### GitHub settings
+
+- **S1** description is non-empty; **S2** at least one topic; **S3** delete-branch-on-merge
+  is on; **S4** the wiki is off; **S5** Dependabot alerts and Dependabot security updates
+  are both on; **S6** secret scanning and push protection are on for public repos
+  (private repos: not applicable — a paid add-on and an owner money gate).
+- **R1** the default branch has an active ruleset with deletion, non_fast_forward and
+  pull_request rules; **R2** its required status checks include `agent-review` plus at
+  least one CI context; **R3** an `agent-fence` branch ruleset keeps `sbx/**` protected
+  while staying writable by bots (bypass actors); **R4** an `agent-fence-tags` tag ruleset.
+  Classic branch protection (**R5**) is reported when present but never required.
+- `scripts/repo-baseline.sh audit` in the `.github` repo checks all of this read-only and
+  exits 1 when a required item is missing or cannot be verified; a new repo must pass it
+  before its first feature PR merges. `apply-settings` fixes only S3-S6 (dry-run by
+  default); rulesets and required checks stay owner-gated to create or change, and
+  `plan-rulesets` prints their JSON without applying anything.
+
 ## Keeping current
 
 Org hygiene is reported, not improvised:
@@ -86,3 +105,12 @@ Org hygiene is reported, not improvised:
   per the hard limits.
 - When this standard changes, bump its version and note the delta; repo AGENTS.md
   files link here, so they pick up changes automatically.
+
+## Version history
+
+- v0.3.0 (2026-10-10): repo baseline v0.1.0 -> v0.2.0 adds the GitHub settings baseline
+  (S1-S6, rulesets R1-R5), pins it to `scripts/repo-baseline.sh audit` as the gate new
+  repos pass before their first feature PR merges, and keeps rulesets and required checks
+  owner-gated to change.
+- v0.2.0 (2026-09-28): agent-native operating model and the merge gate.
+- v0.1.0 (2026-09-24): first standard, including the file-only repo baseline.

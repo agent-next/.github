@@ -66,7 +66,7 @@ res(){ # res <id> <status> <reason>: record one check; MISSING/unknown fail the 
 
 # ---- file checks (F1-F6) ----------------------------------------------------------------
 file_checks(){
-  local b d secs s gap w wb hit lines
+  local b d secs s w wb hit lines
   b=$(file_body AGENTS.md)
   case $b in
     absent)   res F1 MISSING "no AGENTS.md on $BRANCH" ;;
@@ -83,7 +83,7 @@ file_checks(){
     "@AGENTS.md") res F2 ok "" ;;
     absent)       res F2 MISSING "no CLAUDE.md" ;;
     unknown*)     res F2 unknown "CLAUDE.md read: $b" ;;
-    *)            res F2 MISSING "CLAUDE.md is not exactly \@AGENTS.md" ;;
+    *)            res F2 MISSING "CLAUDE.md is not exactly '@AGENTS.md'" ;;
   esac
   b=$(file_body Makefile)
   case $b in

@@ -17,6 +17,9 @@ Default branch: `main`. Docs-only apart from the shell scripts.
   `CODE_OF_CONDUCT.md`, `CODEOWNERS`, `FUNDING.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`.
 - `scripts/agent-review.sh`, `scripts/agent-merge.sh`: the `agent-review` status poster and the
   gate-checking merger. Tests are hermetic (gh, git and lanes are shims): `tests/*.test.sh`.
+- `scripts/repo-baseline.sh`: read-only per-repo audit of the standard's repo baseline
+  (files, GitHub settings, rulesets), plus settings-only fixes (dry-run) and ruleset plans;
+  generic ruleset templates live in `templates/rulesets/`.
 
 ## Setup
 
@@ -24,9 +27,9 @@ None. `make setup` is a no-op echo.
 
 ## Check
 
-`make check` runs the hermetic test suites of both merge-gate scripts
-(`tests/agent-merge.test.sh`, `tests/agent-review.test.sh`). Non-interactive, no secrets,
-no network, no GPU. Run it before every PR.
+`make check` runs the hermetic test suites of the merge-gate and repo-baseline scripts
+(`tests/agent-merge.test.sh`, `tests/agent-review.test.sh`, `tests/repo-baseline.test.sh`).
+Non-interactive, no secrets, no network, no GPU. Run it before every PR.
 
 ## Boundaries
 
