@@ -77,8 +77,8 @@ mkrepo(){
 }
 mkrepo good
 # org listing in the real per-repo item shape: "old" is archived and must be skipped
-jq -s '[ .[0] | .name="good" | .full_name="agent-next/good" | .archived=false,
-         .[0] | .name="old"  | .full_name="agent-next/old"  | .archived=true ]' \
+jq -s '[ (.[0] | .name="good" | .full_name="agent-next/good" | .archived=false),
+         (.[0] | .name="old"  | .full_name="agent-next/old"  | .archived=true) ]' \
   "$FIX/repo.get.json" > "$T/fx/org-repos"
 
 PASS=0; FAIL=0

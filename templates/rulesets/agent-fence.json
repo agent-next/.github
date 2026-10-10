@@ -2,7 +2,10 @@
   "name": "agent-fence",
   "enforcement": "active",
   "target": "branch",
-  "conditions": { "ref_name": { "include": ["refs/heads/sbx/**"], "exclude": [] } },
+  "conditions": { "ref_name": {
+      "include": ["~ALL"],
+      "exclude": ["refs/heads/sbx/**", "refs/heads/sbx/**/*", "refs/heads/dependabot/**", "refs/heads/bot/**", "~DEFAULT_BRANCH"]
+  } },
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },

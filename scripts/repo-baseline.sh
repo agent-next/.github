@@ -143,7 +143,7 @@ probe_settings(){ # prints one "S<n>|ok|reason", "|fix|reason", "|n/a|reason" or
 
 # ---- ruleset checks (R1-R5) --------------------------------------------------------------
 ruleset_checks(){
-  local rb rberr ctx pb ctx2 others gap t id r target inc det
+  local rb rberr ctx pb ctx2 others gap t id r target inc exc det
   if api "repos/$ORG/$R/rules/branches/$BRANCH" > "$TMP/rules"; then rb=$(cat "$TMP/rules"); rberr=; else rb=; rberr=$ERR; fi
   if [ "$rberr" = 403 ] || [ "$rberr" = network ]; then
     res R1 unknown "effective rules read: $rberr"
@@ -169,20 +169,30 @@ ruleset_checks(){
   if [ -n "$pb" ]; then res R5 ok "classic branch protection also present (report only)"
   elif [ "$ERR" = 403 ]; then res R5 unknown "classic protection read: 403 (report only)"
   else res R5 none "no classic branch protection (report only)"; fi
+  # R3/R4: the org fences are include ~ALL with sbx/** carved out of the exclude list — not
+  # rulesets that include sbx/**. Everything is fenced except agent sandbox (and bot/dependabot)
+  # branches; a bypass actor keeps bots working inside the fence
   for id in agent-fence agent-fence-tags; do
     [ "$id" = agent-fence ] && r=R3 || r=R4
     if [ "$RS_ERR" = 403 ] || [ "$RS_ERR" = network ]; then res "$r" unknown "ruleset list read: $RS_ERR"; continue; fi
-    [ "$id" = agent-fence ] && { target=branch; inc="refs/heads/sbx/**"; } || { target=tag; inc="refs/tags/*"; }
+    [ "$id" = agent-fence ] && target=branch || target=tag
     det=$(jq -r --arg n "$id" 'map(select(.name==$n)) | .[0].id // empty' <<<"$RS" 2>/dev/null || true)
     if [ -z "$det" ]; then res "$r" MISSING "no $id ruleset"; continue; fi
     if ! api "repos/$ORG/$R/rulesets/$det" > "$TMP/rs"; then res "$r" unknown "$id ruleset read: $ERR"; continue; fi
     det=$(cat "$TMP/rs")
-    if [ "$(jq -r .enforcement <<<"$det")" = active ] \
-       && jq -e --arg t "$target" --arg i "$inc" '.target==$t and (.conditions.ref_name.include | index($i) != null)' <<<"$det" >/dev/null \
-       && [ "$(jq -r '.bypass_actors | length' <<<"$det")" -ge 1 ]; then
+    inc=$(jq -r '(.conditions.ref_name.include // []) | join(",")' <<<"$det")
+    exc=$(jq -r '(.conditions.ref_name.exclude // []) | join(",")' <<<"$det")
+    if jq -e --arg t "$target" --arg i "$([ "$target" = branch ] && echo '~ALL' || echo 'refs/tags/*')" '
+         .target == $t and .enforcement == "active"
+         and ((.conditions.ref_name.include // []) | index($i) != null)
+         and ((.bypass_actors // []) | length >= 1)
+         and (if $t == "branch"
+              then ((.conditions.ref_name.exclude // [])
+                    | index("refs/heads/sbx/**") != null and index("refs/heads/sbx/**/*") != null)
+              else true end)' <<<"$det" >/dev/null; then
       res "$r" ok ""
     else
-      res "$r" MISSING "$id: enforcement=$(jq -r .enforcement <<<"$det") target=$(jq -r .target <<<"$det") include=$(jq -r '.conditions.ref_name.include | join(",")' <<<"$det") bypass_actors=$(jq -r '.bypass_actors | length' <<<"$det")$([ "$id" = agent-fence ] && echo ' — sbx/** must stay writable by bots (bypass_actors)')"
+      res "$r" MISSING "$id: enforcement=$(jq -r .enforcement <<<"$det") target=$(jq -r .target <<<"$det") include=${inc:-none} exclude=${exc:-none} bypass_actors=$(jq -r '(.bypass_actors // []) | length' <<<"$det") — must be include ~ALL$([ "$id" = agent-fence ] && echo ' excluding refs/heads/sbx/** and refs/heads/sbx/**/*') with a bypass actor"
     fi
   done
 }
