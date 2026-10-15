@@ -154,6 +154,9 @@ case "$(last_desc)" in "ccz: approve") PASS=$((PASS+1)); echo "ok   ccz verdict 
 run "every family in a writer list is refused" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY=cognition,zai -- o/r 1 --post
 if grep -q "skip devin: same family" "$T/out/"*.md; then PASS=$((PASS+1)); echo "ok   receipt records why a lane was skipped"; else FAIL=$((FAIL+1)); echo "FAIL receipt lacks the skip reason"; fi
 run "writer list with spaces and capitals still refuses every family" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY="Anthropic, Cognition , ZAI" -- o/r 1 --post
+run "model-name writer alias refuses its family's lane" 1 "pending|error" AGENT_REVIEWER=ccz AGENT_WRITER_FAMILY=GLM -- o/r 1 --post
+if grep -q "skip ccz: same family as a writer (zai)" "$T/out/"*.md; then PASS=$((PASS+1)); echo "ok   glm alias maps to zai"; else FAIL=$((FAIL+1)); echo "FAIL glm alias not mapped to zai"; fi
+run "claude writer alias still lets other families review" 0 "pending|success" AGENT_REVIEWER=ccz AGENT_WRITER_FAMILY=claude -- o/r 1 --post
 run "misspelled writer family fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=cognitoin -- o/r 1 --post
 case "$(last_desc)" in "unknown writer family") PASS=$((PASS+1)); echo "ok   unknown family names the reason" ;; *) FAIL=$((FAIL+1)); echo "FAIL unknown family description: $(last_desc)" ;; esac
 run "empty writer list fails closed" 64 "pending|error" AGENT_WRITER_FAMILY=", ," -- o/r 1 --post

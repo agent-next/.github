@@ -52,7 +52,8 @@ Output: a findings list, each with file:line, severity (blocker/major/minor/nit)
 Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 (REQUEST_CHANGES iff any blocker or major; AI-attribution text and broken links are always major)."
 # Reviewer chain (owner decisions 2026-09-25/26/28): grok -> agy -> devin -> gpt6pro -> ccz. Each lane is a different
-# model family; a lane whose family is one of the writers' ($AGENT_WRITER_FAMILY, comma-separated, default anthropic) is
+# model family; a lane whose family is one of the writers' ($AGENT_WRITER_FAMILY, comma-separated, default anthropic;
+# model names like claude/gemini/codex/glm map to their family) is
 # refused. ccz (GLM on z.ai) is the stand-in when no frontier lane is healthy; its verdict is labelled ccz on the status.
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
 declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai [ccz]=zai)
@@ -63,9 +64,15 @@ WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
 WRITER_FAMILY=$(printf '%s' "$WRITER_FAMILY" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 [ -n "${WRITER_FAMILY//,/}" ] || { echo "empty AGENT_WRITER_FAMILY" >&2; ABORT="empty writer family"; exit 64; }
 IFS=, read -ra WRITERS <<< "$WRITER_FAMILY"   # split without pathname expansion: a * must not match files
-for f in "${WRITERS[@]}"; do
-  [[ "$f" =~ ^[a-z0-9-]+$ && " anthropic ${FAMILY[*]} " == *" $f "* ]] || { echo "unknown writer family '$f' in AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
+# writers often name the model or harness instead of the vendor: map those exact names to their family
+declare -A FAMILY_ALIAS=([claude]=anthropic [opus]=anthropic [sonnet]=anthropic [haiku]=anthropic [fable]=anthropic
+  [gemini]=google [gpt]=openai [codex]=openai [glm]=zai [swe]=cognition)
+for i in "${!WRITERS[@]}"; do
+  f=${FAMILY_ALIAS[${WRITERS[$i]}]:-${WRITERS[$i]}}
+  [[ "$f" =~ ^[a-z0-9-]+$ && " anthropic ${FAMILY[*]} " == *" $f "* ]] || { echo "unknown writer family '${WRITERS[$i]}' in AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
+  WRITERS[$i]=$f
 done
+WRITER_FAMILY=$(IFS=,; printf '%s' "${WRITERS[*]}")
 GPT6PRO=${GPT6PRO_BIN:-gpt6pro}
 # gpt6pro hands the prompt to its model client in one env string, capped at 128 KiB by Linux
 INLINE_MAX=120000
