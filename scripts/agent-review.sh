@@ -186,14 +186,22 @@ droid_session_file(){ # $1 events file -> stdout: the session file that run wrot
   [ -n "$sid" ] || return 0
   printf '%s\n' "$FACTORY_HOME/sessions/${DROID_CWD//\//-}/$sid.jsonl"; }
 droid_audit(){ # $1 session file -> stdout: its modelId tally ("model=count ..."); rc 1 unless every
-  # modelId is $DROID_MODEL (a missing or model-less session file fails too)
-  local counts
+  # modelId is $DROID_MODEL (a missing or model-less session file fails too). The tally alone is the
+  # oracle, never `grep -q` in a pipeline: grep -q exits on the first mismatching line, jq then dies
+  # on SIGPIPE, and under pipefail the race made a LONG mismatched session read as a pass. Here the
+  # decision needs only the tally: all-$DROID_MODEL is exactly one "model=count" pair, i.e. no
+  # separator space and the model name in front of the one count.
+  local counts tally
   [ -s "$1" ] || { echo "no session file"; return 1; }
   counts=$(jq -rR 'fromjson? | select(.type=="message") | .message.modelId // empty' "$1" | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')
   [ -n "${counts// /}" ] || { echo "no modelId recorded"; return 1; }
   echo "${counts% }"
-  jq -rR 'fromjson? | select(.type=="message") | .message.modelId // empty' "$1" | grep -qvxF "$DROID_MODEL" && return 1
-  return 0; }
+  tally=${counts%" "}   # drop the awk trailing space; the pairs inside stay separated by spaces
+  case "$tally" in
+    *" "*) return 1 ;;                      # more than one model was served
+    "$DROID_MODEL"=[0-9]*) return 0 ;;      # every message came from the pinned model
+    *) return 1 ;;
+  esac; }
 droid_served_as(){ # $1 session file -> stdout: "<modelId> via <apiProvider>" of its last message
   jq -rR 'fromjson? | select(.type=="message") | "\(.message.modelId) via \(.message.apiProvider // "unknown")"' "$1" | tail -n 1; }
 REVIEWER=none; VERDICT=; SERVED=
