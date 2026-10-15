@@ -30,6 +30,14 @@ OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
 NET_TIMEOUT=${AGENT_REVIEW_NET_TIMEOUT:-900}
 KILL_AFTER=${AGENT_REVIEW_KILL_AFTER:-30}   # SIGKILL this long after SIGTERM, for net and lane limits
 net(){ timeout -k "$KILL_AFTER" "$NET_TIMEOUT" "$@"; }
+# one total network budget across all checkout retries (AGENT_REVIEW_NET_BUDGET seconds, default 1200):
+# the per-step timeout bounds a single attempt, this bounds every clone/fetch/checkout attempt added
+# together, because retries multiply the per-step worst case into hours on a hung link
+NET_BUDGET=${AGENT_REVIEW_NET_BUDGET:-1200}
+budget_net(){ # like net, but fails fast once the checkout's total budget is spent and never overshoots it
+  local left=$((NET_BUDGET_DEADLINE - SECONDS))
+  [ "$left" -gt 0 ] || { echo "network budget of $NET_BUDGET s exhausted; failing closed" >&2; return 124; }
+  timeout -k "$KILL_AFTER" "$((left < NET_TIMEOUT ? left : NET_TIMEOUT))" "$@"; }
 HEAD=$(net gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 WORK=$(mktemp -d); STATE=none   # none -> pending -> final (final = a terminal status was posted)
 ABORT="review aborted before a verdict (see runner log)"
@@ -44,30 +52,56 @@ status(){ [ "$POST" = --post ] || return 0
 STATE=pending; status pending "review running"   # pending first: a post killed after GitHub recorded it still gets overwritten by cleanup
 # https + gh credential helper: works for private repos and does not depend on ssh
 SLOW=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120)
-# robust checkout (2026-10-15: a review died at clone with `curl 18 transfer closed` and `fatal: could not
-# fetch <sha> from promisor remote`, because a blob:none clone only fetches blobs lazily): clone and fetch
-# retry up to CLONE_TRIES times with backoff, and a partial clone that still fails falls back to a full
-# clone with no filter, which never needs a lazy fetch
+# Robust checkout. A partial (blob:none) clone fetches blobs lazily, so it can die later at fetch or
+# checkout with `curl 18 transfer closed` / `could not fetch <sha> from promisor remote`; every step
+# here retries with backoff and a step that keeps failing falls through to the next, safest form:
+# clone 3x, then a full unfiltered clone, then fetch 3x, then checkout 3x, then checkout without a
+# blob filter. `timeout`'s 124 marks a budget-failed attempt; a quick failure retries at once. The
+# `sleep` between attempts is capped so backoff cannot eat the total budget on its own.
 CLONE_TRIES=${AGENT_REVIEW_CLONE_TRIES:-3}
 CLONE_BACKOFF=${AGENT_REVIEW_CLONE_BACKOFF:-15}
-clone_try(){ # $1: the clone filter, "" for a full clone; retries, and returns the last attempt's exit code
+NET_BUDGET=${AGENT_REVIEW_NET_BUDGET:-1200}   # seconds; see the budget in net_budgeted below
+budget_left(){ echo $(( NET_BUDGET - (SECONDS - REVIEW_SECONDS) )); }
+net_budgeted(){ # the remaining checkout/fetch budget: bounded even when a per-attempt network
+  # timeout cannot fire (an ssh remote never reads, and stalls that outlive 120 s of transfer)
+  local left; left=$(budget_left)
+  [ "$left" -gt 0 ] || { echo "checkout budget exhausted ($NET_BUDGET s)" >&2; return 125; }
+  net timeout -k "$KILL_AFTER" "$left" "$@"; }
+clone_try(){ # $1: the clone filter, "" for a full clone; retries, returns the last attempt's exit code
   local filter=$1 try rc=0
   for try in $(seq 1 "$CLONE_TRIES"); do
     rm -rf "$WORK/src"   # a failed clone leaves a partial tree that must not be reused
-    net git "${SLOW[@]}" -c credential.helper='!gh auth git-credential' clone -q ${filter:+"$filter"} "https://github.com/$R.git" "$WORK/src" && return 0
+    net_budgeted git "${SLOW[@]}" -c credential.helper='!gh auth git-credential' clone -q ${filter:+"$filter"} "https://github.com/$R.git" "$WORK/src" && return 0
     rc=$?
-    echo "clone failed (try $try/$CLONE_TRIES, exit $rc)" >&2
-    [ "$try" -eq "$CLONE_TRIES" ] || sleep "$CLONE_BACKOFF"
+    echo "clone failed (try $try/$CLONE_TRIES, exit $rc, $(budget_left) s left)" >&2
+    [ "$rc" = 124 ] && continue   # the budget just failed it; no backoff needed, rerun now
+    [ "$try" -eq "$CLONE_TRIES" ] || { local s; s=$(( CLONE_BACKOFF < $(budget_left) ? CLONE_BACKOFF : $(budget_left) )); [ "$s" -gt 0 ] && sleep "$s" || true; }
   done
   return "$rc"
 }
 fetch_try(){ # retries the PR head fetch; returns the last attempt's exit code
   local try rc=0
   for try in $(seq 1 "$CLONE_TRIES"); do
-    net git -C "$WORK/src" fetch -q origin "pull/$PR/head" && return 0
+    net_budgeted git -C "$WORK/src" fetch -q origin "pull/$PR/head" && return 0
     rc=$?
-    echo "fetch failed (try $try/$CLONE_TRIES, exit $rc)" >&2
-    [ "$try" -eq "$CLONE_TRIES" ] || sleep "$CLONE_BACKOFF"
+    echo "fetch failed (try $try/$CLONE_TRIES, exit $rc, $(budget_left) s left)" >&2
+    [ "$rc" = 124 ] && continue
+    [ "$try" -eq "$CLONE_TRIES" ] || { local s; s=$(( CLONE_BACKOFF < $(budget_left) ? CLONE_BACKOFF : $(budget_left) )); [ "$s" -gt 0 ] && sleep "$s" || true; }
+  done
+  return "$rc"
+}
+# checkout_try: retry the head checkout, then retry it without the blob filter; a promisor-remote blob
+# fetch is the failure a partial clone most often hides until this point
+checkout_try(){ # returns 0 only when HEAD is actually checked out
+  local try rc=0
+  for try in $(seq 1 "$CLONE_TRIES"); do
+    rm -rf "$WORK/src"   # fall back to a full clone of the already-fetched objects
+    net_budgeted git -C "$WORK/src" fetch -q --refetch origin "pull/$PR/head" 2>/dev/null || true
+    net_budgeted git -C "$WORK/src" checkout -q --detach "$HEAD" && return 0
+    rc=$?
+    echo "checkout failed (try $try/$CLONE_TRIES, exit $rc, $(budget_left) s left)" >&2
+    [ "$rc" = 124 ] && continue
+    [ "$try" -eq "$CLONE_TRIES" ] || { local s; s=$(( CLONE_BACKOFF < $(budget_left) ? CLONE_BACKOFF : $(budget_left) )); [ "$s" -gt 0 ] && sleep "$s" || true; }
   done
   return "$rc"
 }
@@ -79,7 +113,7 @@ git -C "$WORK/src" config credential.helper '!gh auth git-credential'
 git -C "$WORK/src" config http.lowSpeedLimit 1000
 git -C "$WORK/src" config http.lowSpeedTime 120
 fetch_try
-net git -C "$WORK/src" checkout -q --detach "$HEAD"   # blob:none: checkout fetches blobs
+checkout_try || { echo "checkout failed after retries" >&2; ABORT="checkout failed after retries"; exit 4; }
 [ "$(git -C "$WORK/src" rev-parse HEAD)" = "$HEAD" ] || { echo "checkout is not $HEAD; refusing to review" >&2; status error "checkout mismatch"; STATE=final; exit 4; }
 net gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
 net gh pr view "$PR" -R "$R" --json commits -q '"\nCOMMITS:\n" + ([.commits[] | "--- \(.oid[0:7])\n\(.messageHeadline)\n\(.messageBody)"] | join("\n"))' >> "$WORK/pr.txt"
