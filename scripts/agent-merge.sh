@@ -19,7 +19,17 @@ read -r AR BY < <(gh api "repos/$R/commits/$HEAD/statuses?per_page=100" --pagina
   jq -r '[.[][]|select(.context=="agent-review")]|sort_by(.created_at, .id)|last|"\(.state // "absent") \(.creator.login // "-")"')
 [ "$AR" = success ] || { echo "BLOCKED: agent-review=$AR on ${HEAD:0:7}"; exit 2; }
 case ",$POSTERS," in *",$BY,"*) ;; *) echo "BLOCKED: agent-review on ${HEAD:0:7} posted by $BY, not in AGENT_REVIEW_POSTERS"; exit 2 ;; esac
-gh pr checks "$PR" -R "$R" --required >/dev/null || { echo "BLOCKED: required checks not green"; gh pr checks "$PR" -R "$R" --required || true; exit 2; }
+# A repo with no required checks configured is vacuously green -- gh exits 1
+# with exactly that message, which must not block (a red required check still
+# exits 1 with a different message, and a configured-but-pending one reports
+# pending; both keep blocking).
+checks_rc=0; checks_out=$(gh pr checks "$PR" -R "$R" --required 2>&1) || checks_rc=$?
+if [ "$checks_rc" -ne 0 ]; then
+  case "$checks_out" in
+    "no required checks reported on the "*" branch") : ;;  # none configured: vacuously green
+    *) echo "BLOCKED: required checks not green"; printf '%s\n' "$checks_out"; exit 2 ;;
+  esac
+fi
 NOW=$(gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 [ "$NOW" = "$HEAD" ] || { echo "BLOCKED: head moved ${HEAD:0:7} -> ${NOW:0:7} during the gate check; rerun"; exit 2; }
 gh pr merge "$PR" -R "$R" --squash --match-head-commit "$HEAD"

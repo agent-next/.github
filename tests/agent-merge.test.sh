@@ -21,7 +21,9 @@ case "$args" in
     printf '{"context":"agent-review","state":"pending","created_at":"2026-01-01T00:00:01Z","id":1,"creator":{"login":"rev"}},'
     printf '{"context":"agent-review","state":"%s","created_at":"2026-01-01T00:00:02Z","id":2,"creator":{"login":"%s"}}]]\n' \
       "${FAKE_STATE:-success}" "${FAKE_POSTER:-rev}" ;;
-  "pr checks"*) [ -z "${FAKE_CHECKS_RED:-}" ] || { echo "test  fail"; exit 1; } ;;
+  "pr checks"*)
+    if [ -n "${FAKE_CHECKS_RED:-}" ]; then echo "test  fail"; exit 1; fi
+    if [ -n "${FAKE_NO_REQUIRED:-}" ]; then echo "no required checks reported on the 'x' branch"; exit 1; fi ;;
   "pr merge"*) echo "$args" > "$T/merged" ;;
   *"--json state,mergeCommit"*) echo "o/r#1: MERGED abcdef0" ;;
   *) echo "gh shim: unexpected: $args" >&2; exit 99 ;;
@@ -46,6 +48,7 @@ if grep -q -- "--match-head-commit aaaaaaa1111111111111111111111111111111111" "$
 run "failed review blocks" 2 no FAKE_STATE=failure
 run "review posted by an unlisted identity blocks" 2 no FAKE_POSTER=someone-else
 run "red required checks block" 2 no FAKE_CHECKS_RED=1
+run "no required checks configured is vacuously green and merges" 0 yes FAKE_NO_REQUIRED=1
 run "head moved during the gate check blocks" 2 no FAKE_NEW_HEAD=ccccccc2222222222222222222222222222222222
 run "unset AGENT_REVIEW_POSTERS fails closed" 1 no AGENT_REVIEW_POSTERS=
 run "hung head lookup hits the network timeout and never merges" 124 no FAKE_HEAD_HANG=1 AGENT_MERGE_NET_TIMEOUT=1
