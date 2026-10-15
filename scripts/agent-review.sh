@@ -3,19 +3,25 @@
 # commit status `agent-review` on that SHA (the agent-native merge gate; no human approval).
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
-# tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
+#        env: AGENT_REVIEWER lanes (default: droid devin ccz; grok and agy stay callable),
+#             AGENT_WRITER_FAMILY writer families (default: anthropic)
+# tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lanes are shims, jq is real)
 # Reviewer chain (owner decisions 2026-09-25/26/28, lane roster 2026-10-15): droid (Claude Opus 5.5) ->
-# devin -> ccz, with grok and agy still callable through AGENT_REVIEWER. A lane of a writer's model family
-# (AGENT_WRITER_FAMILY, comma-separated; model names like claude/gemini/codex/glm map to their family) is
-# refused. ccz (GLM on z.ai) is the stand-in when no frontier lane is healthy; its verdict is labelled ccz on
-# the status. The droid lane additionally audits the served model (2026-10-15: droid exec -m gpt-6.1-sol
-# silently ran 150 min on kimi-k3): a session whose messages were not all served as the requested model
-# never counts (see served-model audit below).
+# devin -> ccz; grok and agy stay callable through AGENT_REVIEWER; gpt6pro is gone (owner 2026-10-14:
+# never gpt-6). A lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated; model names like
+# claude/gemini/codex/glm map to their family) is refused, droid included: an anthropic writer family skips
+# droid and falls through to devin. ccz (GLM on z.ai) is the stand-in when no frontier lane is healthy; its
+# verdict is labelled ccz on the status. The droid lane also audits the model that actually served it (see
+# the served-model audit below), because on 2026-10-15 droid exec -m gpt-6.1-sol silently ran 150 min on
+# kimi-k3.
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
 # Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 set -f   # no pathname expansion anywhere: unquoted env lists (lanes, accounts, families) must never match files
-[ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
+[ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]
+  (without --post: dry run, no status/comment)
+  env: AGENT_REVIEWER lanes, default 'droid devin ccz' (grok and agy callable too);
+       AGENT_WRITER_FAMILY families, default anthropic" >&2; exit 64; }
 R=$1; PR=$2; POST=${3:-}
 OUT=${AGENT_REVIEW_OUT:-$PWD/agent-review-receipts}; mkdir -p "$OUT"
 # network steps must not hang the gate: every gh/git network call has a hard limit
@@ -38,11 +44,41 @@ status(){ [ "$POST" = --post ] || return 0
 STATE=pending; status pending "review running"   # pending first: a post killed after GitHub recorded it still gets overwritten by cleanup
 # https + gh credential helper: works for private repos and does not depend on ssh
 SLOW=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120)
-net git "${SLOW[@]}" -c credential.helper='!gh auth git-credential' clone -q --filter=blob:none "https://github.com/$R.git" "$WORK/src"
+# robust checkout (2026-10-15: a review died at clone with `curl 18 transfer closed` and `fatal: could not
+# fetch <sha> from promisor remote`, because a blob:none clone only fetches blobs lazily): clone and fetch
+# retry up to CLONE_TRIES times with backoff, and a partial clone that still fails falls back to a full
+# clone with no filter, which never needs a lazy fetch
+CLONE_TRIES=${AGENT_REVIEW_CLONE_TRIES:-3}
+CLONE_BACKOFF=${AGENT_REVIEW_CLONE_BACKOFF:-15}
+clone_try(){ # $1: the clone filter, "" for a full clone; retries, and returns the last attempt's exit code
+  local filter=$1 try rc=0
+  for try in $(seq 1 "$CLONE_TRIES"); do
+    rm -rf "$WORK/src"   # a failed clone leaves a partial tree that must not be reused
+    net git "${SLOW[@]}" -c credential.helper='!gh auth git-credential' clone -q ${filter:+"$filter"} "https://github.com/$R.git" "$WORK/src" && return 0
+    rc=$?
+    echo "clone failed (try $try/$CLONE_TRIES, exit $rc)" >&2
+    [ "$try" -eq "$CLONE_TRIES" ] || sleep "$CLONE_BACKOFF"
+  done
+  return "$rc"
+}
+fetch_try(){ # retries the PR head fetch; returns the last attempt's exit code
+  local try rc=0
+  for try in $(seq 1 "$CLONE_TRIES"); do
+    net git -C "$WORK/src" fetch -q origin "pull/$PR/head" && return 0
+    rc=$?
+    echo "fetch failed (try $try/$CLONE_TRIES, exit $rc)" >&2
+    [ "$try" -eq "$CLONE_TRIES" ] || sleep "$CLONE_BACKOFF"
+  done
+  return "$rc"
+}
+if ! clone_try --filter=blob:none; then
+  echo "partial clone still failing; falling back to a full clone without a filter" >&2
+  clone_try ""
+fi
 git -C "$WORK/src" config credential.helper '!gh auth git-credential'
 git -C "$WORK/src" config http.lowSpeedLimit 1000
 git -C "$WORK/src" config http.lowSpeedTime 120
-net git -C "$WORK/src" fetch -q origin "pull/$PR/head"
+fetch_try
 net git -C "$WORK/src" checkout -q --detach "$HEAD"   # blob:none: checkout fetches blobs
 [ "$(git -C "$WORK/src" rev-parse HEAD)" = "$HEAD" ] || { echo "checkout is not $HEAD; refusing to review" >&2; status error "checkout mismatch"; STATE=final; exit 4; }
 net gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
@@ -69,25 +105,37 @@ Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 declare -A FAMILY=([droid]=anthropic [grok]=xai [agy]=google [devin]=cognition [ccz]=zai)
 # the devin CLI runs several vendors' models; the devin lane runs only swe-2 (owner decision 2026-09-28).
 declare -A DEVIN_MODEL=([devin]=swe-2-max)
-# gateway pool writers: the gateway free pool falls back to GLM (zai/glm-5.3-flash), and its other members
-# (deepseek, longcat, cat-jam, ...) have no reviewer lane, so their ids map to zai like the ccz lane.
+# writers often name the model or harness instead of the vendor: map those exact names to their family
 declare -A FAMILY_ALIAS=([claude]=anthropic [opus]=anthropic [sonnet]=anthropic [haiku]=anthropic [fable]=anthropic
   [gemini]=google [gpt]=openai [codex]=openai [glm]=zai [swe]=cognition
   [pro-zdr]=zai [flash-zdr]=zai [pro-open]=zai [flash-open]=zai [small-open]=zai)
-for id in custom:gw-* gw-*; do FAMILY_ALIAS[$id]=zai; done   # gateway ids are patterns, not fixed names
+# gateway pool writers: the gateway free pool falls back to GLM (zai/glm-5.3-flash), and its other members
+# (deepseek, longcat, cat-jam, ...) have no reviewer lane of their own, so a gateway id counts as the zai
+# family -- the family the pool can silently serve -- and refuses the ccz lane like any other zai writer.
+# Gateway ids are patterns (custom:gw-*, gw-*), so they are matched, not looked up as exact keys.
+writer_family(){ # $1 writer id -> stdout: the model family that id belongs to
+  case "$1" in
+    custom:gw-*|gw-*) echo zai ;;
+    *) echo "${FAMILY_ALIAS[$1]:-$1}" ;;
+  esac; }
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
 # normalize (case, spaces) and allow only known families: a typo must fail closed, never let a writer's family review
 WRITER_FAMILY=$(printf '%s' "$WRITER_FAMILY" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 [ -n "${WRITER_FAMILY//,/}" ] || { echo "empty AGENT_WRITER_FAMILY" >&2; ABORT="empty writer family"; exit 64; }
 IFS=, read -ra WRITERS <<< "$WRITER_FAMILY"   # split without pathname expansion: a * must not match files
 for i in "${!WRITERS[@]}"; do
-  f=${FAMILY_ALIAS[${WRITERS[$i]}]:-${WRITERS[$i]}}
+  f=$(writer_family "${WRITERS[$i]}")
   [[ "$f" =~ ^[a-z0-9-]+$ && " anthropic ${FAMILY[*]} " == *" $f "* ]] || { echo "unknown writer family '${WRITERS[$i]}' in AGENT_WRITER_FAMILY" >&2; ABORT="unknown writer family"; exit 64; }
   WRITERS[$i]=$f
 done
 WRITER_FAMILY=$(IFS=,; printf '%s' "${WRITERS[*]}")
 # per-lane time limit in seconds; raise it for large PRs (a 42-file port needed more than 1800)
 LANE_TIMEOUT=${AGENT_REVIEW_TIMEOUT:-1800}
+# the droid lane is pinned to the owner's named final reviewer (2026-10-14) and runs with -o stream-json so
+# its transcript is auditable; everything the audit needs is defined below the lane table
+DROID_MODEL=claude-opus-5-5
+DROID_CWD=$WORK/src
+FACTORY_HOME=${AGENT_REVIEW_FACTORY_HOME:-$HOME/.factory}
 review_with(){ case "$1" in
   grok) (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
   agy)  (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
@@ -110,8 +158,9 @@ Review directly with file reads and read-only git commands; do not invoke skills
       [ "$try" -eq 3 ] && { cat "$WORK/devin-try.txt"; return "$drc"; }
       sleep "${AGENT_REVIEW_BACKOFF:-120}"
     done ;;
-  droid) # -o stream-json: the transcript, so the final text and the served model are auditable (below)
-    (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${AGENT_REVIEW_DROID_BIN:-droid}" exec --auto medium -m claude-opus-5-5 -r high --cwd "$WORK/src" "$PROMPT" < /dev/null) ;;
+  droid) # -o stream-json turns the lane's stdout into an auditable event stream (see the audit below);
+    # < /dev/null keeps it headless, --auto medium lets it read the checkout without prompting
+    (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${AGENT_REVIEW_DROID_BIN:-droid}" exec --auto medium -m "$DROID_MODEL" -r high -o stream-json --cwd "$WORK/src" "$PROMPT" < /dev/null) ;;
   ccz) # --model pins glm-5.3; an inherited CCZ_TIER (ccz's tier selector) is dropped so it cannot pick a model that
     # must not see private code. The runner's own CLAUDE.md files are disabled: host instructions (e.g. "answer in
     # Chinese") made long reviews end without the English VERDICT line, which then never counts. --safe-mode also
@@ -119,55 +168,59 @@ Review directly with file reads and read-only git commands; do not invoke skills
     (cd "$WORK/src" && env -u CCZ_TIER CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${CCZ_BIN:-ccz}" --safe-mode --model glm-5.3 --add-dir "$WORK" -p "$PROMPT
 Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
 esac; }
-REVIEWER=none; VERDICT=; SERVED=
-# droid streams JSON events on stdout (run with -o stream-json), not prose: the review text is the
-# finalText of the last {"type":"completion"} event. The session id is in the first {"type":"system"}
-# event, whose `model` field is only the model that was REQUESTED: what actually served the session is
-# in ${AGENT_REVIEW_FACTORY_HOME:-$HOME/.factory}/sessions/<cwd-slug>/<session_id>.jsonl, where <cwd-slug>
-# is the review cwd with every / replaced by -, and its {"type":"message"} lines carry modelId/apiProvider.
-# 2026-10-15: droid exec -m gpt-6.1-sol silently served a 150-minute review on kimi-k3, so a verdict counts
-# only if EVERY modelId in that file is the pinned claude-opus-5-5; otherwise (including a missing session
-# file) the lane result is NONE, the receipt records served-model mismatch, and the chain falls through.
-droid_stream(){ # $1 out: the droid events; $2 out: the review text extracted from those events
-  mv "$1" "$2.json"
-  local p=${2%.txt}
-  timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${AGENT_REVIEW_DROID_BIN:-droid}" exec --auto medium \
-    -m claude-opus-5-5 -r high -o stream-json --cwd "$WORK/src" "$PROMPT" < /dev/null > "$2.json" 2>&1 || true
-  return 0; }
-droid_text(){ # $1 stream-json file -> stdout: the finalText of its last completion event
-  grep -oE '"type":"completion"[^\n]*' "$1" | tail -1 | grep -oE '"finalText":"[^"]*"' | sed 's/"finalText":"//; s/"$//' ; }
-droid_served(){ # $1 stream-json file -> stdout: the modelId tally of the session file, and rc 1 if it is
-  # not all claude-opus-5-5 (or the file is missing); the receipt then records served-model mismatch
-  local sid=${1##*/}; sid=${sid%.json}
-  local sess="${AGENT_REVIEW_FACTORY_HOME:-$HOME/.factory}/sessions/${WORK//\//-}-src/$sid.jsonl"
-  if [ ! -s "$sess" ]; then echo "no session file"; return 1; fi
-  local counts; counts=$(grep -oE '"modelId":"[^"]*"' "$sess" | sed 's/"modelId":"//; s/"$//' | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')
+# Served-model audit (droid only). The lane's stdout is a stream of JSON events, not prose: the review text
+# is the finalText of its last {"type":"completion"} event, and the session id is in the first
+# {"type":"system","session_id": ...} event. That event's `model` field is only the model that was
+# REQUESTED; what actually served the session is in ${AGENT_REVIEW_FACTORY_HOME:-$HOME/.factory}/
+# sessions/<cwd-slug>/<session_id>.jsonl, where <cwd-slug> is the review cwd with every / replaced by a -
+# and its {"type":"message", "message": {"modelId": ..., "apiProvider": ...}} lines carry the model.
+# 2026-10-15: droid exec -m gpt-6.1-sol silently served a 150-minute review on kimi-k3, so a droid verdict
+# counts only if EVERY modelId in that file is the pinned $DROID_MODEL; otherwise -- including a missing
+# session file -- the lane result is NONE, the receipt records the mismatch, and the chain falls through.
+droid_text(){ # $1 events file -> stdout: the finalText of its last completion event
+  jq -cR 'fromjson? | select(.type=="completion") | .finalText // empty' "$1" | tail -n 1 | jq -r .; }
+droid_session(){ # $1 events file -> stdout: the session id of its first system event
+  jq -rR 'fromjson? | select(.type=="system") | .session_id // empty' "$1" | head -n 1; }
+droid_session_file(){ # $1 events file -> stdout: the session file that run wrote (nothing if it has no id)
+  local sid; sid=$(droid_session "$1")
+  [ -n "$sid" ] || return 0
+  printf '%s\n' "$FACTORY_HOME/sessions/${DROID_CWD//\//-}/$sid.jsonl"; }
+droid_audit(){ # $1 session file -> stdout: its modelId tally ("model=count ..."); rc 1 unless every
+  # modelId is $DROID_MODEL (a missing or model-less session file fails too)
+  local counts
+  [ -s "$1" ] || { echo "no session file"; return 1; }
+  counts=$(jq -rR 'fromjson? | select(.type=="message") | .message.modelId // empty' "$1" | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')
   [ -n "${counts// /}" ] || { echo "no modelId recorded"; return 1; }
   echo "${counts% }"
-  grep -vqE '"modelId":"claude-opus-5-5"' <(grep -oE '"modelId":"[^"]*"' "$sess") || return 1
+  jq -rR 'fromjson? | select(.type=="message") | .message.modelId // empty' "$1" | grep -qvxF "$DROID_MODEL" && return 1
   return 0; }
+droid_served_as(){ # $1 session file -> stdout: "<modelId> via <apiProvider>" of its last message
+  jq -rR 'fromjson? | select(.type=="message") | "\(.message.modelId) via \(.message.apiProvider // "unknown")"' "$1" | tail -n 1; }
+REVIEWER=none; VERDICT=; SERVED=
 for LANE in ${AGENT_REVIEWER:-droid devin ccz}; do
   [ -n "${FAMILY[$LANE]:-}" ] || { echo "unknown reviewer lane $LANE" >&2; exit 64; }
   [[ ",$WRITER_FAMILY," != *",${FAMILY[$LANE]},"* ]] || { echo "skip $LANE: same family as a writer ($WRITER_FAMILY)" | tee -a "$WORK/lanes.txt" >&2; continue; }
   rc=0; review_with "$LANE" > "$WORK/review-$LANE.txt" 2>&1 || rc=$?
+  SERVED=; WHY=
   if [ "$LANE" = droid ] && [ "$rc" -eq 0 ]; then
-    # the lane output is the event stream: swap in the extracted review text, then audit the served model
-    droid_text "$WORK/review-$LANE.txt" > "$WORK/droid-review.txt" || true
-    echo "reviewer droid (Opus 5.5) transcript: $(grep -c . "$WORK/review-$LANE.txt") events" >> "$WORK/lanes.txt"
-    mv "$WORK/droid-review.txt" "$WORK/review-$LANE.txt"
+    # the lane's output is the event stream: keep it as the transcript, swap the review text into its place
+    cp "$WORK/review-$LANE.txt" "$WORK/droid-events.json"
+    echo "reviewer droid (Opus 5.5) transcript: $(grep -c . "$WORK/droid-events.json") events" >> "$WORK/lanes.txt"
+    droid_text "$WORK/droid-events.json" > "$WORK/review-$LANE.txt" || true
   fi
   V=$(grep -oE "VERDICT: (APPROVE|REQUEST_CHANGES)" "$WORK/review-$LANE.txt" | tail -1 | cut -d" " -f2 || true)
-  MISMATCH=
   if [ "$LANE" = droid ] && [ "$rc" -eq 0 ] && [ -n "$V" ]; then
-    if MISMATCH=$(droid_served "$WORK/review-droid.txt"); then
-      SERVED="served: $(grep -oE '"modelId":"[^"]*"' "$WORK/review-droid.txt" | tail -1 | sed 's/"modelId":"//; s/"$//') via $(grep -oE '"apiProvider":"[^"]*"' "$WORK/review-droid.txt" | tail -1 | sed 's/"apiProvider":"//; s/"$//')"
+    sess=$(droid_session_file "$WORK/droid-events.json")
+    if [ -n "$sess" ] && counts=$(droid_audit "$sess"); then
+      SERVED="served: $(droid_served_as "$sess")"
     else
-      echo "served-model mismatch: ${MISMATCH:-no session file}" | tee -a "$WORK/lanes.txt" >&2
+      WHY="served-model mismatch: ${counts:-no session file}"   # name the real reason on the next line
+      echo "$WHY" | tee -a "$WORK/lanes.txt" >&2
       V=
     fi
   fi
   if [ "$rc" -eq 0 ] && [ -n "$V" ]; then REVIEWER=$LANE; VERDICT=$V; cp "$WORK/review-$LANE.txt" "$WORK/review.txt"; break; fi
-  echo "reviewer $LANE not usable (exit $rc): $(grep -m1 -v '^\s*$' "$WORK/review-$LANE.txt" | cut -c1-160)" | tee -a "$WORK/lanes.txt" >&2
+  echo "reviewer $LANE not usable${WHY:+ ($WHY)} (exit $rc): $(grep -m1 -v '^\s*$' "$WORK/review-$LANE.txt" | cut -c1-160)" | tee -a "$WORK/lanes.txt" >&2
   # keep the end of the failed lane's output: the first line is often only a CLI warning
   tail -n 8 "$WORK/review-$LANE.txt" | cut -c1-240 | sed 's/^/    | /' >> "$WORK/lanes.txt"
 done
@@ -177,7 +230,7 @@ done
 DOWNGRADE=$(grep -oE "server resolved \`[^\`]+\`" "$WORK/review.txt" | head -1 | tr -d '\`' || true)
 LABEL=$REVIEWER; [ -z "$DOWNGRADE" ] || LABEL="$REVIEWER (degraded: ${DOWNGRADE#server resolved })"
 NOW=$(net gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
-{ echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $LABEL (${FAMILY[$REVIEWER]:-none}) · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
+{ echo "# agent-review $R#$PR @ $HEAD"; echo "reviewer: $LABEL (${FAMILY[$REVIEWER]:-none})${SERVED:+ · $SERVED} · writer family: $WRITER_FAMILY · $(date -Is)"; [ -f "$WORK/lanes.txt" ] && cat "$WORK/lanes.txt"; echo "verdict: ${VERDICT:-NONE}"
   [ "$NOW" = "$HEAD" ] || echo "NOTE: head moved to $NOW during review; posted error, rerun"; echo; cat "$WORK/review.txt"; } > "$REC"
 
 [ "$NOW" = "$HEAD" ] || { ABORT="head moved during review; rerun"; echo "$ABORT"; exit 3; }
