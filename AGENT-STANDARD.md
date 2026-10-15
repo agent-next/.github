@@ -38,6 +38,11 @@ These apply even under elevated-permission modes:
   pasted in the PR body. A claim without a receipt is a draft.
 - Clean your own work in time: temp files, scratch branches, clones, and stale worktrees you
   created are removed as soon as they stop being useful. Clean only what you created.
+- Demo videos are real animation: every shot before a static end card is moving real
+  output (simulation playback, renders, 3D turntables, screen recordings) with numbers as
+  an animated overlay. Never slide decks — no text-only cards, still plots or screenshots
+  between cuts, no Ken-Burns pans over stills. Gate: `cookbook/tools/video_gate.py` in
+  agent-next/sandbox (`motion_fraction`).
 
 ## Merge policy (agent-native gate)
 
