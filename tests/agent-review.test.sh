@@ -135,9 +135,17 @@ sess="${AGENT_REVIEW_FACTORY_HOME}/sessions/$slug/$sid.jsonl"
 if [ -n "${FAKE_DROID_NO_MODEL:-}" ]; then
   printf '{"type":"message","message":{"text":"no model here"}}\n' > "$sess"
 else
-  for m in ${FAKE_DROID_MODELS:-claude-opus-5-5}; do
-    printf '{"type":"message","message":{"modelId":"%s","apiProvider":"fake-provider"}}\n' "$m"
-  done > "$sess"
+  {
+    # FAKE_DROID_MODELS_FIRST: one extra line before the cycled models (a lone mismatch in a long session)
+    [ -z "${FAKE_DROID_MODELS_FIRST:-}" ] || printf '{"type":"message","message":{"modelId":"%s","apiProvider":"fake-provider"}}\n' "$FAKE_DROID_MODELS_FIRST"
+    r=0
+    while [ "$r" -lt "${FAKE_DROID_REPEAT:-1}" ]; do
+      for m in ${FAKE_DROID_MODELS:-claude-opus-5-5}; do
+        printf '{"type":"message","message":{"modelId":"%s","apiProvider":"fake-provider"}}\n' "$m"
+      done
+      r=$((r+1))
+    done
+  } > "$sess"
 fi
 EOF
 chmod +x "$T/bin/"*
@@ -271,6 +279,18 @@ case "$(last_desc)" in "devin: approve") PASS=$((PASS+1)); echo "ok   mismatched
 check "receipt records the mismatch counts" "served-model mismatch: claude-opus-5-5=1 kimi-k3=2" "$T/out/*.md"
 check "the discarded droid verdict is not in the receipt" "reviewer: devin" "$T/out/*.md"
 check "the discard line names the served-model reason" "reviewer droid not usable \(served-model mismatch: claude-opus-5-5=1 kimi-k3=2\) \(exit 0\)" "$T/out/*.md"
+# review finding (blocker): a long session with ONE mismatched line must fail the audit every time.
+# `jq | grep -q` under pipefail races (grep exits on the first hit, jq dies on SIGPIPE), so a long
+# mismatched session could pass; this must be rejected 10 runs out of 10, not most of them
+rejected=0
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  run "long session, one mismatched line, run $i of 10" 0 "pending|success" AGENT_REVIEWER="droid devin" \
+      AGENT_REVIEW_DROID_BIN="$T/bin/droid" FAKE_DROID_MODELS_FIRST=kimi-k3 FAKE_DROID_MODELS=claude-opus-5-5 \
+      FAKE_DROID_REPEAT=5000 -- o/r 1 --post
+  grep -q "served-model mismatch" "$T/out/"*.md && rejected=$((rejected+1))
+done
+if [ "$rejected" -eq 10 ]; then PASS=$((PASS+1)); echo "ok   a 5001-line session with one mismatch is rejected 10/10"
+else FAIL=$((FAIL+1)); echo "FAIL long mismatched session rejected only $rejected/10 times"; fi
 run "droid with no session file falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="droid devin" AGENT_REVIEW_DROID_BIN="$T/bin/droid" \
     FAKE_DROID_NO_SESSION=1 -- o/r 1 --post
 case "$(last_desc)" in "devin: approve") PASS=$((PASS+1)); echo "ok   missing session file never counts" ;; *) FAIL=$((FAIL+1)); echo "FAIL missing-session fallthrough: $(last_desc)" ;; esac
