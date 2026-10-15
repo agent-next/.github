@@ -99,10 +99,11 @@ Review directly with file reads and read-only git commands; do not invoke skills
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
     [ "$(wc -c < "$WORK/gpt6pro-prompt.txt")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: prompt larger than $INLINE_MAX bytes"; return 65; }
     timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
-  droid) # read-only `droid exec` (its default autonomy); the model is pinned because droid's own default is not a
+  droid) # `droid exec --auto medium`: its read-only default and --auto low exit "insufficient permission" on the
+    # git/test commands a review runs, so the prompt keeps it read-only. The model is pinned: droid's default is not a
     # reviewer model. Headless auth: FACTORY_API_KEY, else the key file a host keeps at ~/.config/factory/api-key.
     (cd "$WORK/src" && FACTORY_API_KEY="${FACTORY_API_KEY:-$(cat "$HOME/.config/factory/api-key" 2>/dev/null)}" \
-      timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${DROID_BIN:-droid}" exec -m "${AGENT_REVIEW_DROID_MODEL:-claude-opus-5-5}" --cwd "$WORK/src" "$PROMPT
+      timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${DROID_BIN:-droid}" exec --auto medium -m "${AGENT_REVIEW_DROID_MODEL:-claude-opus-5-5}" --cwd "$WORK/src" "$PROMPT
 Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
   ccz) # --model pins glm-5.3; an inherited CCZ_TIER (ccz's tier selector) is dropped so it cannot pick a model that
     # must not see private code. The runner's own CLAUDE.md files are disabled: host instructions (e.g. "answer in
