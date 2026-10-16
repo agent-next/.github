@@ -6,3 +6,4 @@ setup:
 check:
 	bash tests/agent-merge.test.sh
 	bash tests/agent-review.test.sh
+	python3 -m unittest tests.test_ci_tools

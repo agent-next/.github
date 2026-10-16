@@ -17,6 +17,10 @@ Default branch: `main`. Docs-only apart from the shell scripts.
   `CODE_OF_CONDUCT.md`, `CODEOWNERS`, `FUNDING.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`.
 - `scripts/agent-review.sh`, `scripts/agent-merge.sh`: the `agent-review` status poster and the
   gate-checking merger. Tests are hermetic (gh, git and lanes are shims): `tests/*.test.sh`.
+- `scripts/ci/`: incremental CI kit repos vendor verbatim. `affected.py` selects the tests a
+  change can reach (import + file-name graph, fail-safe to ALL); `run_parallel.py` runs them as
+  parallel processes; `recall.sh` is the mutation probe that proves a selection missed nothing.
+  Tests: `tests/test_ci_tools.py` (throwaway git repos).
 
 ## Setup
 
@@ -25,7 +29,7 @@ None. `make setup` is a no-op echo.
 ## Check
 
 `make check` runs the hermetic test suites of both merge-gate scripts
-(`tests/agent-merge.test.sh`, `tests/agent-review.test.sh`). Non-interactive, no secrets,
+(`tests/agent-merge.test.sh`, `tests/agent-review.test.sh`) and of `scripts/ci/`. Non-interactive, no secrets,
 no network, no GPU. Run it before every PR.
 
 ## Boundaries
