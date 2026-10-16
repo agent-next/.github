@@ -34,6 +34,9 @@ EOF
 cat > "$T/bin/git" <<'EOF'
 #!/usr/bin/env bash
 args="$*"
+# the -C dir of the current call (the checkout's alternates are read from there)
+dir=; prev=
+for a in "$@"; do [ "$prev" = "-C" ] && dir=$a; prev=$a; done
 case "$args" in
   *" clone "*)
     [ -z "${FAKE_CLONE_HANG:-}" ] || sleep 30
@@ -46,17 +49,25 @@ case "$args" in
       echo "fatal: could not fetch abc from promisor remote" >&2; exit 128; fi
     # FAKE_PARTIAL_FAIL: only the blob:none clone fails; the unfiltered fallback clone works
     case "$args" in *"blob:none"*) [ -z "${FAKE_PARTIAL_FAIL:-}" ] || { echo "curl 18 transfer closed with outstanding read data remaining" >&2; exit 128; } ;; esac
-    mkdir -p "${!#}"
+    mkdir -p "${!#}/.git/objects/info"
     # a hostile PR can commit .agent-review/pr.txt as a symlink out of the checkout
     [ -z "${FAKE_PLANT:-}" ] || { mkdir -p "${!#}/.agent-review"; ln -s "$FAKE_PLANT" "${!#}/.agent-review/pr.txt"; } ;;
   *" config http.lowSpeed"*) echo "${args##*config }" >> "$T/git-config" ;;
   *" fetch "*)
     [ -z "${FAKE_FETCH_HANG:-}" ] || sleep 30
+    echo "$args" >> "$T/fetch-args"
     n=$(( $(cat "$T/fetch-runs" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$T/fetch-runs"
     [ "$n" -le "${FAKE_FETCH_FAIL_TIMES:-0}" ] && { echo "curl 18 transfer closed" >&2; exit 128; }
     # the stall abort must be persisted in the clone, not only passed to clone
     [ "$(paste -sd' ' "$T/git-config" 2>/dev/null)" = "http.lowSpeedLimit 1000 http.lowSpeedTime 120" ] || { echo "fetch without stall abort" >&2; exit 97; } ;;
-  *" checkout "*) [ -z "${FAKE_CHECKOUT_HANG:-}" ] || sleep 30 ;;
+  *" checkout "*)
+    [ -z "${FAKE_CHECKOUT_HANG:-}" ] || sleep 30
+    n=$(( $(cat "$T/checkout-runs" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$T/checkout-runs"
+    # FAKE_CHECKOUT_FAIL_TIMES=<n>: the first n checkouts fail (a lazy promisor blob fetch), as the
+    # clone can: the checkout must retry, then fall back to fetching every object
+    [ "$n" -le "${FAKE_CHECKOUT_FAIL_TIMES:-0}" ] && { echo "fatal: could not fetch $FAKE_HEAD from promisor remote" >&2; exit 128; }
+    # the alternates the script appended for AGENT_REVIEW_REFERENCE, if any
+    if [ -n "$dir" ] && [ -f "$dir/.git/objects/info/alternates" ]; then cp "$dir/.git/objects/info/alternates" "$T/alternates"; fi ;;
   *" rev-parse HEAD") echo "${FAKE_CHECKOUT:-$FAKE_HEAD}" ;;
   *) : ;;
 esac
@@ -122,6 +133,15 @@ case " $* " in *" -m claude-opus-5-5 "*) ;; *) echo "droid not pinned to claude-
 cwd=; prev=
 for a in "$@"; do [ "$prev" = "--cwd" ] && cwd=$a; prev=$a; done
 [ -n "$cwd" ] || { echo "droid ran without --cwd"; exit 7; }
+# FAKE_DROID_SECOND_RUN_NO_SESSION: run 2 emits a verdict but writes no session file, so a repeated
+# droid lane cannot inherit run 1's tally (the per-lane state reset must hold)
+n=$(( $(cat "$T/droid-runs" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$T/droid-runs"
+if [ "$n" -gt 1 ] && [ -n "${FAKE_DROID_SECOND_RUN_NO_SESSION:-}" ]; then
+  printf '{"type":"system","session_id":"sess-0000000000000002","model":"claude-opus-5-5"}\n'
+  jq -cn --arg t "${FAKE_DROID_REPLY:-findings
+VERDICT: APPROVE}" '{type:"completion",finalText:$t}'
+  exit 0
+fi
 sid=sess-0000000000000001
 printf '{"type":"system","session_id":"%s","model":"claude-opus-5-5"}\n' "$sid"
 if [ "${FAKE_DROID_EVENTS:-stream}" = stream ]; then
@@ -160,7 +180,8 @@ run(){
   local name=$1 want_rc=$2 want=$3; shift 3
   local envs=(); while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
   rm -f "$T/statuses" "$T/heads" "$T/failed-once" "$T/devin-runs" "$T/devin-bins" "$T/git-config" \
-        "$T/clone-runs" "$T/clone-filters" "$T/fetch-runs" "$T/droid-args" "$T/grok-args" "$T/agy-args"
+        "$T/clone-runs" "$T/clone-filters" "$T/fetch-runs" "$T/droid-args" "$T/grok-args" "$T/agy-args" \
+        "$T/checkout-runs" "$T/alternates" "$T/droid-runs" "$T/fetch-args"
   rm -rf "$T/factory" "$T/out"   # each run gets its own receipts, so the checks below read only its own
   # start from a clean environment so caller-exported AGENT_*/FAKE_* values cannot leak in
   env -i HOME="$HOME" PATH="$T/bin:$PATH" T="$T" FAKE_HEAD=aaaaaaa1111111111111111111111111111111111 \
@@ -270,7 +291,10 @@ run "droid approves with a served-model audit" 0 "pending|success" AGENT_REVIEWE
 case "$(last_desc)" in "droid: approve") PASS=$((PASS+1)); echo "ok   droid verdict is attributed to droid" ;; *) FAIL=$((FAIL+1)); echo "FAIL droid description: $(last_desc)" ;; esac
 check "receipt header records the served model" "served: claude-opus-5-5 via fake-provider" "$T/out/*.md"
 check "droid verdict counts, so the chain stops there" "verdict: APPROVE" "$T/out/*.md"
-check "the event stream is kept as the transcript" "transcript: [0-9]+ events" "$T/out/*.md"
+check "the receipt records the session id and file, so the audit can be re-checked" "session id: sess-0000000000000001" "$T/out/*.md"
+check "receipt names the session file it audited" "session file: .*/sessions/-tmp-tmp\..*-src/sess-0000000000000001.jsonl" "$T/out/*.md"
+if grep -qF '"type":"system","session_id":"sess-0000000000000001"' "$T/out/"*.events.jsonl 2>/dev/null && grep -qF '"type":"completion","finalText":"findings' "$T/out/"*.events.jsonl; then PASS=$((PASS+1)); echo "ok   the event stream is kept next to the receipt as <receipt>.events.jsonl"
+else FAIL=$((FAIL+1)); echo "FAIL events.jsonl next to the receipt is not the lane's event stream"; fi
 # the session file lives under the review cwd with every / replaced by - (/tmp/tmp.X/src -> -tmp-tmp.X-src)
 case "$(ls "$T/factory/sessions" 2>/dev/null)" in -tmp-tmp.*-src) PASS=$((PASS+1)); echo "ok   session dir is the cwd slug" ;; *) FAIL=$((FAIL+1)); echo "FAIL session dir slug: $(ls "$T/factory/sessions" 2>/dev/null)" ;; esac
 run "droid served-model mismatch falls through to the next lane" 0 "pending|success" AGENT_REVIEWER="droid devin" AGENT_REVIEW_DROID_BIN="$T/bin/droid" \
@@ -316,29 +340,79 @@ run "opus writer alias also skips the droid lane" 1 "pending|error" AGENT_REVIEW
 run "non-anthropic writer still gets the droid lane" 0 "pending|success" AGENT_REVIEWER=droid AGENT_WRITER_FAMILY=gemini \
     AGENT_REVIEW_DROID_BIN="$T/bin/droid" -- o/r 1 --post
 
-echo "--- gateway pool writer aliases (criterion 4) ---"
-# the gateway free pool falls back to GLM (zai/glm-5.3-flash); its other members (deepseek, longcat,
-# cat-jam, ...) have no reviewer lane, so every gateway id counts as zai and refuses the ccz lane
-for w in pro-zdr flash-zdr pro-open flash-open small-open gw-7 custom:gw-9; do
-  run "gateway pool writer '$w' refuses the ccz lane" 1 "pending|error" AGENT_WRITER_FAMILY="$w" -- o/r 1 --post
-done
-check "gateway alias is recorded as zai" "skip ccz: same family as a writer \(zai\)" "$T/out/*.md"
-run "gateway writer list mixes aliases and families" 1 "pending|error" AGENT_REVIEWER="devin ccz" \
-    AGENT_WRITER_FAMILY="flash-open, cognition" -- o/r 1 --post
-run "gateway writer is not the anthropic family, so droid still reviews" 0 "pending|success" AGENT_REVIEWER=droid \
-    AGENT_WRITER_FAMILY=pro-zdr AGENT_REVIEW_DROID_BIN="$T/bin/droid" -- o/r 1 --post
+echo "--- deployment writer aliases (AGENT_REVIEW_FAMILY_ALIASES, criterion 4) ---"
+# The script hard-codes no pool ids: a deployment names its own ids through
+# AGENT_REVIEW_FAMILY_ALIASES, and a pooled id must count as the family that pool actually serves
+# (it can silently serve any member), so the matching reviewer lane is refused. Exact keys and
+# pattern keys (trailing *) both work; the pattern matches the whole id.
+ALIASES="pool-a=zai,pool-b=google,pool-*=zai,unmapped-*=google"
+run "a named pool writer refuses that family's lane" 1 "pending|error" \
+    AGENT_REVIEW_FAMILY_ALIASES="$ALIASES" AGENT_WRITER_FAMILY=pool-a -- o/r 1 --post
+check "pool writer is recorded as its pool's family" "skip ccz: same family as a writer .zai." "$T/out/*.md"
+run "a pattern alias refuses its family's lane" 1 "pending|error" \
+    AGENT_REVIEW_FAMILY_ALIASES="$ALIASES" AGENT_WRITER_FAMILY=pool-anything-else -- o/r 1 --post
+check "pattern writer is recorded as the pattern's family" "skip ccz: same family as a writer .zai." "$T/out/*.md"
+# an exact key must win over a pattern that also matches it, whatever the hash order: pool-b is
+# google, even though pool-* says zai. Without the precedence, a pooled id could refuse the wrong
+# lane and let the pool's real family review its own PR.
+run "an exact alias key wins over a matching pattern" 0 "pending|success" AGENT_REVIEWER="agy ccz" \
+    AGENT_REVIEW_FAMILY_ALIASES="$ALIASES" AGENT_WRITER_FAMILY=pool-b -- o/r 1 --post
+check "the exact key's family is the one refused" "skip agy: same family as a writer .google." "$T/out/*.md"
+run "an id matching a later pattern still refuses its family's lane" 1 "pending|error" \
+    AGENT_REVIEWER=agy AGENT_REVIEW_FAMILY_ALIASES="$ALIASES" AGENT_WRITER_FAMILY=unmapped-42 -- o/r 1 --post
+check "later-pattern writer is recorded as its family" "skip agy: same family as a writer .google." "$T/out/*.md"
+run "a pool writer list mixes aliases, patterns and families" 1 "pending|error" AGENT_REVIEWER="devin ccz" \
+    AGENT_REVIEW_FAMILY_ALIASES="$ALIASES" AGENT_WRITER_FAMILY="pool-a, cognition" -- o/r 1 --post
+run "a pool writer is not the anthropic family, so droid still reviews" 0 "pending|success" AGENT_REVIEWER=droid \
+    AGENT_REVIEW_FAMILY_ALIASES="$ALIASES" AGENT_WRITER_FAMILY=pool-a AGENT_REVIEW_DROID_BIN="$T/bin/droid" -- o/r 1 --post
+run "an alias entry without = fails closed" 64 "pending|error" \
+    AGENT_REVIEW_FAMILY_ALIASES="pool-a" AGENT_WRITER_FAMILY=pool-a -- o/r 1 --post
+run "an alias entry with an unknown family fails closed" 64 "pending|error" \
+    AGENT_REVIEW_FAMILY_ALIASES="pool-a=notafamily" AGENT_WRITER_FAMILY=pool-a -- o/r 1 --post
 
 echo "--- robust checkout (criterion 6) ---"
 run "a flaky first clone is retried and recovers" 0 "pending|success" FAKE_CLONE_FAIL_TIMES=1 -- o/r 1 --post
-check "the retry is logged" "clone failed \(try 1/3, exit 128\)" "$T/log"
+check "the retry is logged" "clone failed .try 1/3, exit 128, [0-9]+ s left." "$T/log"
 case "$(cat "$T/clone-runs" 2>/dev/null)" in 2) PASS=$((PASS+1)); echo "ok   exactly one retry was needed" ;; *) FAIL=$((FAIL+1)); echo "FAIL clone attempts: $(cat "$T/clone-runs" 2>/dev/null)" ;; esac
 run "a flaky fetch is retried and recovers" 0 "pending|success" FAKE_FETCH_FAIL_TIMES=2 -- o/r 1 --post
-check "the fetch retry is logged" "fetch failed \(try 2/3, exit 128\)" "$T/log"
+check "the fetch retry is logged" "fetch failed .try 2/3, exit 128, [0-9]+ s left." "$T/log"
 run "a partial clone that never succeeds falls back to a full clone" 0 "pending|success" FAKE_PARTIAL_FAIL=1 -- o/r 1 --post
 check "the fallback is logged" "falling back to a full clone without a filter" "$T/log"
 case "$(paste -sd' ' "$T/clone-filters" 2>/dev/null)" in "partial partial partial full") PASS=$((PASS+1)); echo "ok   three partial attempts, then one unfiltered clone" ;; *) FAIL=$((FAIL+1)); echo "FAIL clone filters: $(paste -sd' ' "$T/clone-filters" 2>/dev/null)" ;; esac
 run "every clone attempt failing still posts error" 128 "pending|error" FAKE_PARTIAL_FAIL=1 FAKE_CLONE_FAIL=1 -- o/r 1 --post
 case "$(cat "$T/clone-runs" 2>/dev/null)" in 6) PASS=$((PASS+1)); echo "ok   3 partial + 3 full attempts, then fail closed" ;; *) FAIL=$((FAIL+1)); echo "FAIL clone attempts before failing closed: $(cat "$T/clone-runs" 2>/dev/null)" ;; esac
+# the checkout retries too: a lazy promisor blob fetch can fail like the clone did, and recovery
+# must keep the clone (only a failed clone is thrown away) and succeed on a later attempt
+run "a flaky first checkout is retried and recovers" 0 "pending|success" FAKE_CHECKOUT_FAIL_TIMES=1 -- o/r 1 --post
+check "the checkout retry is logged" "checkout failed .try 1/3, exit 128, [0-9]+ s left." "$T/log"
+case "$(cat "$T/checkout-runs" 2>/dev/null)" in 2) PASS=$((PASS+1)); echo "ok   the checkout needed exactly one retry" ;; *) FAIL=$((FAIL+1)); echo "FAIL checkout attempts: $(cat "$T/checkout-runs" 2>/dev/null)" ;; esac
+case "$(cat "$T/clone-runs" 2>/dev/null)" in 1) PASS=$((PASS+1)); echo "ok   a failed checkout keeps the clone" ;; *) FAIL=$((FAIL+1)); echo "FAIL a failed checkout re-cloned: $(cat "$T/clone-runs" 2>/dev/null)" ;; esac
+# a checkout that keeps failing falls back to refetching every object, then still fails closed
+run "a checkout that never succeeds fails closed with exit 128" 128 "pending|error" FAKE_CHECKOUT_FAIL_TIMES=99 -- o/r 1 --post
+check "the refetch fallback is logged in the git call" "\-\-refetch" "$T/fetch-args"
+# one total network budget over every attempt: with every network step hanging, the run must end
+# within roughly the budget (never 3 clone x 900 s), posting error instead of stalling the gate
+t0=$SECONDS
+run "a hung link exhausts the budget and fails closed" 124 "pending|error" FAKE_CLONE_HANG=1 \
+    AGENT_REVIEW_NET_TIMEOUT=5 AGENT_REVIEW_NET_BUDGET=6 AGENT_REVIEW_CLONE_BACKOFF=0 -- o/r 1 --post
+elapsed=$((SECONDS - t0))
+if [ "$elapsed" -le 12 ]; then PASS=$((PASS+1)); echo "ok   total network time bounded: ${elapsed} s with a 6 s budget (no retry multiplication)"
+else FAIL=$((FAIL+1)); echo "FAIL hung link held the gate ${elapsed} s with a 6 s budget"; fi
+# AGENT_REVIEW_REFERENCE=<local clone>: its object store becomes an alternate, so the checkout's
+# blobs can come from local disk instead of a stalling network
+REFCLONE="$T/refclone"; mkdir -p "$REFCLONE/.git/objects"
+run "a reference clone is appended to the checkout's alternates" 0 "pending|success" \
+    AGENT_REVIEW_REFERENCE="$REFCLONE" -- o/r 1 --post
+case "$(cat "$T/alternates" 2>/dev/null)" in "$REFCLONE/.git/objects") PASS=$((PASS+1)); echo "ok   the reference's objects are an alternate" ;; *) FAIL=$((FAIL+1)); echo "FAIL alternates: $(cat "$T/alternates" 2>/dev/null)" ;; esac
+# a reference path that does not exist is ignored, not fatal
+run "a missing reference clone is ignored" 0 "pending|success" \
+    AGENT_REVIEW_REFERENCE="$T/no-such-reference" -- o/r 1 --post
+# finding 10: a repeated droid lane whose second run has no session file must say so, not inherit
+# the first run's tally (counts reset per lane)
+run "a repeated droid lane cannot inherit the previous tally" 1 "pending|error" AGENT_REVIEWER="droid droid" \
+    AGENT_REVIEW_DROID_BIN="$T/bin/droid" FAKE_DROID_MODELS_FIRST=kimi-k3 AGENT_REVIEW_DROID_REPEAT=0 \
+    FAKE_DROID_SECOND_RUN_NO_SESSION=1 -- o/r 1 --post
+check "the second droid run reports no session file, not the first run's tally" "served-model mismatch: no session file" "$T/out/*.md"
 
 # SIGTERM (outer timeout, CI cancel) during the review must not leave pending behind
 rm -f "$T/statuses" "$T/heads" "$T/git-config"
