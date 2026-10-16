@@ -45,10 +45,7 @@ net(){ timeout -k "$KILL_AFTER" "$NET_TIMEOUT" "$@"; }
 # the per-step timeout bounds a single attempt, this bounds every clone/fetch/checkout attempt added
 # together, because retries multiply the per-step worst case into hours on a hung link
 NET_BUDGET=${AGENT_REVIEW_NET_BUDGET:-1200}
-budget_net(){ # like net, but fails fast once the checkout's total budget is spent and never overshoots it
-  local left=$((NET_BUDGET_DEADLINE - SECONDS))
-  [ "$left" -gt 0 ] || { echo "network budget of $NET_BUDGET s exhausted; failing closed" >&2; return 124; }
-  timeout -k "$KILL_AFTER" "$((left < NET_TIMEOUT ? left : NET_TIMEOUT))" "$@"; }
+NET_BUDGET_DEADLINE=$((SECONDS + NET_BUDGET))
 HEAD=$(net gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid)
 WORK=$(mktemp -d); STATE=none   # none -> pending -> final (final = a terminal status was posted)
 ABORT="review aborted before a verdict (see runner log)"
@@ -71,8 +68,6 @@ SLOW=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=120)
 # `sleep` between attempts is capped so backoff cannot eat the total budget on its own.
 CLONE_TRIES=${AGENT_REVIEW_CLONE_TRIES:-3}
 CLONE_BACKOFF=${AGENT_REVIEW_CLONE_BACKOFF:-15}
-NET_BUDGET=${AGENT_REVIEW_NET_BUDGET:-1200}
-NET_BUDGET_DEADLINE=$((SECONDS + NET_BUDGET))
 budget_left(){ echo $(( NET_BUDGET_DEADLINE - SECONDS )); }
 net_budgeted(){ # like net, but fails fast once the checkout's total budget is spent and never
   # overshoots it: bounded even when a per-attempt timeout cannot fire (an ssh remote never reads,
@@ -118,7 +113,9 @@ checkout_try(){ # returns 0 only when HEAD is actually checked out
     [ "$rc" = 124 ] && continue
     [ "$try" -eq "$CLONE_TRIES" ] || { local s; s=$(( CLONE_BACKOFF < $(budget_left) ? CLONE_BACKOFF : $(budget_left) )); [ "$s" -gt 0 ] && sleep "$s" || true; }
   done
-  # last resort: fetch every object, not just the ones the checkout asked for
+  # last resort: fetch every object, not just the ones the checkout asked for. The final checkout's
+  # rc must reach the caller too (a hung one is 124), so like the loop above there is no `local rc`
+  # on it and no `|| true` between the refetch and the checkout
   net_budgeted git -C "$WORK/src" fetch -q --refetch origin "pull/$PR/head" || true
   net_budgeted git -C "$WORK/src" checkout -q --detach "$HEAD"
 }
@@ -139,7 +136,7 @@ fetch_try
 # the checkout is untrusted code: drop the credential helper so nothing the PR ships can reuse the
 # gh token through git (the gh CLI's own host auth is outside this script's reach; see the header)
 git -C "$WORK/src" config --unset credential.helper
-checkout_try || { echo "checkout failed after retries" >&2; ABORT="checkout failed after retries"; exit 4; }
+checkout_try || { rc=$?; echo "checkout failed after retries (exit $rc)" >&2; ABORT="checkout failed after retries"; exit "$rc"; }
 [ "$(git -C "$WORK/src" rev-parse HEAD)" = "$HEAD" ] || { echo "checkout is not $HEAD; refusing to review" >&2; status error "checkout mismatch"; STATE=final; exit 4; }
 net gh pr view "$PR" -R "$R" --json title,body,baseRefName,files -q '"TITLE: \(.title)\nBASE: \(.baseRefName)\nFILES: \([.files[].path]|join(", "))\n\nBODY:\n\(.body)"' > "$WORK/pr.txt"
 net gh pr view "$PR" -R "$R" --json commits -q '"\nCOMMITS:\n" + ([.commits[] | "--- \(.oid[0:7])\n\(.messageHeadline)\n\(.messageBody)"] | join("\n"))' >> "$WORK/pr.txt"
@@ -168,10 +165,11 @@ declare -A DEVIN_MODEL=([devin]=swe-2-max)
 # writers often name the model or harness instead of the vendor: map those exact names to their family
 declare -A FAMILY_ALIAS=([claude]=anthropic [opus]=anthropic [sonnet]=anthropic [haiku]=anthropic [fable]=anthropic
   [gemini]=google [gpt]=openai [codex]=openai [glm]=zai [swe]=cognition)
-# extra id=family pairs a deployment can add for its own writer pool (AGENT_REVIEW_FAMILY_ALIASES):
-# some pools route several vendors' ids to one backend, so the honest family for every one of them
-# is the family the pool can silently serve, not the vendor the id is named after. Patterns (gw-*,
-# custom:gw-*, ...) are matched, not looked up as keys.
+# extra id=family pairs a deployment can add for its own writer pool (AGENT_REVIEW_FAMILY_ALIASES).
+# Some pools route several ids to one backend, so the honest family for every one of them is the
+# family that backend belongs to, not the vendor an id is named after. The host names its own ids
+# here; nothing about any specific pool is hard-coded in this script. A pattern key (ending in *)
+# is matched against the whole id instead of being looked up as a string.
 while IFS=, read -ra PAIRS; do
   for p in "${PAIRS[@]}"; do
     [ -n "$p" ] || continue
@@ -184,9 +182,11 @@ while IFS=, read -ra PAIRS; do
 done <<< "${AGENT_REVIEW_FAMILY_ALIASES:-}"
 writer_family(){ # $1 writer id -> stdout: the model family that id belongs to
   local k
+  [[ -n "${FAMILY_ALIAS[$1]+x}" ]] && { echo "${FAMILY_ALIAS[$1]}"; return 0; }   # exact key first: a
+  # pattern must not shadow the exact id it also matches (hash order is unspecified)
   for k in "${!FAMILY_ALIAS[@]}"; do
     case "$1" in
-      $k) echo "${FAMILY_ALIAS[$k]}"; return 0 ;;   # unquoted: a pool id may be a pattern (gw-*)
+      $k) echo "${FAMILY_ALIAS[$k]}"; return 0 ;;   # unquoted: a pool id may be a pattern (trailing *)
     esac
   done
   echo "$1"; }
