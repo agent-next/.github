@@ -82,6 +82,14 @@ cat > "$T/bin/ccz" <<'EOF'
 case " $* " in *" -p "*) ;; *) echo "not headless"; exit 3 ;; esac
 echo "VERDICT: APPROVE"
 EOF
+# droid shim: approves only for a pinned --auto medium exec run in the checkout, with the API key reaching it
+cat > "$T/bin/droid" <<'EOF'
+#!/usr/bin/env bash
+[ "$1 $2 $3 $4 $5 $6" = "exec --auto medium -m claude-opus-5-5 --cwd" ] || { echo "bad flags: $*"; exit 2; }
+[ "$PWD" = "$7" ] || { echo "not run in the checkout: $PWD vs $7"; exit 3; }
+[ "${FACTORY_API_KEY:-}" = "fake-factory-key" ] || { echo "api key not passed"; exit 4; }
+echo "VERDICT: APPROVE"
+EOF
 chmod +x "$T/bin/"*
 # a second account that is never rate-limited, and the shim renamed so only the named bin can run
 cp "$T/bin/devin" "$T/bin/devin-b"
@@ -151,6 +159,9 @@ if grep -q "unknown reviewer lane devin-sol" "$T/log"; then PASS=$((PASS+1)); ec
 run "devin-sol fails closed for the writer family it used to accept" 64 "pending|error" AGENT_REVIEWER=devin-sol AGENT_WRITER_FAMILY=cognition -- o/r 1 --post
 run "ccz stand-in: pinned model, inherited CCZ_TIER dropped" 0 "pending|success" AGENT_REVIEWER=ccz CCZ_TIER=some-other-tier -- o/r 1 --post
 case "$(last_desc)" in "ccz: approve") PASS=$((PASS+1)); echo "ok   ccz verdict is attributed to ccz" ;; *) FAIL=$((FAIL+1)); echo "FAIL ccz description: $(last_desc)" ;; esac
+run "droid lane: pinned model, --auto medium exec in the checkout" 0 "pending|success" AGENT_REVIEWER=droid AGENT_WRITER_FAMILY=zai FACTORY_API_KEY=fake-factory-key -- o/r 1 --post
+case "$(last_desc)" in "droid: approve") PASS=$((PASS+1)); echo "ok   droid verdict is attributed to droid" ;; *) FAIL=$((FAIL+1)); echo "FAIL droid description: $(last_desc)" ;; esac
+run "droid lane is refused for an anthropic writer" 1 "pending|error" AGENT_REVIEWER=droid FACTORY_API_KEY=fake-factory-key -- o/r 1 --post
 run "every family in a writer list is refused" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY=cognition,zai -- o/r 1 --post
 if grep -q "skip devin: same family" "$T/out/"*.md; then PASS=$((PASS+1)); echo "ok   receipt records why a lane was skipped"; else FAIL=$((FAIL+1)); echo "FAIL receipt lacks the skip reason"; fi
 run "writer list with spaces and capitals still refuses every family" 1 "pending|error" AGENT_REVIEWER="devin ccz" AGENT_WRITER_FAMILY="Anthropic, Cognition , ZAI" -- o/r 1 --post

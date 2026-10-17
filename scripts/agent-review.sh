@@ -4,7 +4,7 @@
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
 # tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
-# Reviewer chain: grok -> agy -> devin -> gpt6pro -> ccz (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
+# Reviewer chain: grok -> agy -> devin -> gpt6pro -> ccz; droid (a pinned Claude model) is opt-in via AGENT_REVIEWER for writers outside the anthropic family (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 set -f   # no pathname expansion anywhere: unquoted env lists (lanes, accounts, families) must never match files
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
@@ -55,7 +55,7 @@ Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 # model family; a lane whose family is one of the writers' ($AGENT_WRITER_FAMILY, comma-separated, default anthropic) is
 # refused. ccz (GLM on z.ai) is the stand-in when no frontier lane is healthy; its verdict is labelled ccz on the status.
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
-declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai [ccz]=zai)
+declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai [ccz]=zai [droid]=anthropic)
 # the devin CLI runs several vendors' models; the devin lane runs only swe-2 (owner decision 2026-09-28).
 declare -A DEVIN_MODEL=([devin]=swe-2-max)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
@@ -99,6 +99,12 @@ Review directly with file reads and read-only git commands; do not invoke skills
       cat "$WORK/pr.txt"; printf '\n=== COMPLETE DIFF ===\n'; cat "$WORK/pr.diff"; } > "$WORK/gpt6pro-prompt.txt"
     [ "$(wc -c < "$WORK/gpt6pro-prompt.txt")" -le "$INLINE_MAX" ] || { echo "LANE_INELIGIBLE: prompt larger than $INLINE_MAX bytes"; return 65; }
     timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "$GPT6PRO" - < "$WORK/gpt6pro-prompt.txt" ;;
+  droid) # `droid exec --auto medium`: its read-only default and --auto low exit "insufficient permission" on the
+    # git/test commands a review runs, so the prompt keeps it read-only. The model is pinned: droid's default is not a
+    # reviewer model. Headless auth: FACTORY_API_KEY, else the key file a host keeps at ~/.config/factory/api-key.
+    (cd "$WORK/src" && FACTORY_API_KEY="${FACTORY_API_KEY:-$(cat "$HOME/.config/factory/api-key" 2>/dev/null)}" \
+      timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${DROID_BIN:-droid}" exec --auto medium -m "${AGENT_REVIEW_DROID_MODEL:-claude-opus-5-5}" --cwd "$WORK/src" "$PROMPT
+Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
   ccz) # --model pins glm-5.3; an inherited CCZ_TIER (ccz's tier selector) is dropped so it cannot pick a model that
     # must not see private code. The runner's own CLAUDE.md files are disabled: host instructions (e.g. "answer in
     # Chinese") made long reviews end without the English VERDICT line, which then never counts. --safe-mode also
