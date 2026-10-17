@@ -5,18 +5,15 @@ Org rules: https://github.com/agent-next/.github/blob/main/AGENT-STANDARD.md (th
 
 ## Purpose
 
-Public org-level repo for github.com/agent-next: the agent standard, the org profile,
-community health files (issue/PR templates, security, conduct, contributing, funding,
-code owners), and the merge-gate scripts that implement the standard's merge policy.
-Default branch: `main`. Docs-only apart from the shell scripts.
+Public org-level repo for github.com/agent-next: the agent standard, the org profile, and
+the community health files (issue/PR templates, security, conduct, contributing, funding,
+code owners). Default branch: `main`. Docs-only.
 
 ## Orient
 
 - `AGENT-STANDARD.md`: the org standard (version in its first line). Changing it is owner-gated.
 - `profile/README.md`: org profile page. `ROADMAP.md`, `CONTRIBUTING.md`, `SECURITY.md`,
   `CODE_OF_CONDUCT.md`, `CODEOWNERS`, `FUNDING.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`.
-- `scripts/agent-review.sh`, `scripts/agent-merge.sh`: the `agent-review` status poster and the
-  gate-checking merger. Tests are hermetic (gh, git and lanes are shims): `tests/*.test.sh`.
 
 ## Setup
 
@@ -24,9 +21,9 @@ None. `make setup` is a no-op echo.
 
 ## Check
 
-`make check` runs the hermetic test suites of both merge-gate scripts
-(`tests/agent-merge.test.sh`, `tests/agent-review.test.sh`). Non-interactive, no secrets,
-no network, no GPU. Run it before every PR.
+`make check` verifies the baseline files are present and non-empty (the merge-gate scripts
+were removed from the public tree; see `AGENT-STANDARD.md` for the merge policy itself).
+Non-interactive, no secrets, no network, no GPU. Run it before every PR.
 
 ## Boundaries
 
@@ -37,7 +34,7 @@ no network, no GPU. Run it before every PR.
 - Root `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md` and `PULL_REQUEST_TEMPLATE.md`
   are org-wide defaults for repos without their own. Issue templates and `FUNDING.yml` only
   propagate from a `.github/` folder, so the root copies here do not. Other files never do.
-- No workflows exist yet; adding CI or changing the gate scripts needs an independent review.
+- No workflows exist yet; adding CI needs an independent review.
 
 ## Done
 
