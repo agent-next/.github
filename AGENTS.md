@@ -17,6 +17,10 @@ Default branch: `main`. Docs-only apart from the shell scripts.
   `CODE_OF_CONDUCT.md`, `CODEOWNERS`, `FUNDING.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`.
 - `scripts/agent-review.sh`, `scripts/agent-merge.sh`: the `agent-review` status poster and the
   gate-checking merger. Tests are hermetic (gh, git and lanes are shims): `tests/*.test.sh`.
+- Review chain (lane roster 2026-10-15): `droid` (Opus 5.5, the owner's named final reviewer) ->
+  `devin` -> `ccz`; `grok` and `agy` stay callable through `AGENT_REVIEWER`. The droid lane also
+  audits which model actually served it and falls through on a mismatch. Lanes of the declared
+  writer family (`AGENT_WRITER_FAMILY`) are skipped, droid included; see the script header.
 
 ## Setup
 
