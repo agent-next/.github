@@ -4,7 +4,9 @@
 # A new push creates a new SHA without the status, so stale reviews never count.
 # usage: agent-review.sh <owner/repo> <pr> [--post]   (without --post: dry run, no status/comment)
 # tests: bash tests/agent-review.test.sh (hermetic; gh, git and the lane are shims)
-# Reviewer chain: grok -> agy -> devin -> gpt6pro -> ccz (AGENT_REVIEWER overrides the order); a lane of a writer's model family (AGENT_WRITER_FAMILY, comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
+# Reviewer chain: opus -> ccz -> devin (AGENT_REVIEWER overrides the order; the retired gpt6pro, agy and
+# X-only grok lanes still run when named there); a lane of a writer's model family (AGENT_WRITER_FAMILY,
+# comma-separated) is refused. Receipts go to $AGENT_REVIEW_OUT (default ./agent-review-receipts).
 set -euo pipefail
 set -f   # no pathname expansion anywhere: unquoted env lists (lanes, accounts, families) must never match files
 [ $# -ge 2 ] || { echo "usage: agent-review.sh <owner/repo> <pr> [--post]" >&2; exit 64; }
@@ -51,11 +53,11 @@ Run the repo's own check command if cheap (see AGENTS.md / Makefile). Do not mod
 Output: a findings list, each with file:line, severity (blocker/major/minor/nit) and evidence.
 Last line exactly one of: VERDICT: APPROVE   or   VERDICT: REQUEST_CHANGES
 (REQUEST_CHANGES iff any blocker or major; AI-attribution text and broken links are always major)."
-# Reviewer chain (owner decisions 2026-09-25/26/28): grok -> agy -> devin -> gpt6pro -> ccz. Each lane is a different
+# Reviewer chain: Opus 5.5, ccz, then Devin. Each lane is a different
 # model family; a lane whose family is one of the writers' ($AGENT_WRITER_FAMILY, comma-separated, default anthropic) is
 # refused. ccz (GLM on z.ai) is the stand-in when no frontier lane is healthy; its verdict is labelled ccz on the status.
 # A lane result counts only if the lane exited 0 AND printed a VERDICT line; otherwise the next lane runs.
-declare -A FAMILY=([grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai [ccz]=zai)
+declare -A FAMILY=([opus]=anthropic [grok]=xai [agy]=google [devin]=cognition [gpt6pro]=openai [ccz]=zai)
 # the devin CLI runs several vendors' models; the devin lane runs only swe-2 (owner decision 2026-09-28).
 declare -A DEVIN_MODEL=([devin]=swe-2-max)
 WRITER_FAMILY=${AGENT_WRITER_FAMILY:-anthropic}
@@ -72,6 +74,10 @@ INLINE_MAX=120000
 # per-lane time limit in seconds; raise it for large PRs (a 42-file port needed more than 1800)
 LANE_TIMEOUT=${AGENT_REVIEW_TIMEOUT:-1800}
 review_with(){ case "$1" in
+  opus) (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${DROID_BIN:-droid}" exec \
+    --auto medium -m claude-opus-5-5 -r high --disable-builtin-skills \
+    --only-tools Read,Grep,Glob,Execute --cwd "$WORK/src" "$PROMPT
+Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
   grok) (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" grok --always-approve --cwd "$WORK/src" -p "$PROMPT") ;;
   agy)  (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" agy --dangerously-skip-permissions --add-dir "$WORK" -p "$PROMPT") ;;
   devin) # sandboxed: writes stay in the throwaway checkout, so the inputs go there too. The checkout
@@ -107,7 +113,7 @@ Review directly with file reads and read-only git commands; do not invoke skills
 Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;
 esac; }
 REVIEWER=none; VERDICT=
-for LANE in ${AGENT_REVIEWER:-grok agy devin gpt6pro ccz}; do
+for LANE in ${AGENT_REVIEWER:-opus ccz devin}; do
   [ -n "${FAMILY[$LANE]:-}" ] || { echo "unknown reviewer lane $LANE" >&2; exit 64; }
   [[ ",$WRITER_FAMILY," != *",${FAMILY[$LANE]},"* ]] || { echo "skip $LANE: same family as a writer ($WRITER_FAMILY)" | tee -a "$WORK/lanes.txt" >&2; continue; }
   rc=0; review_with "$LANE" > "$WORK/review-$LANE.txt" 2>&1 || rc=$?
