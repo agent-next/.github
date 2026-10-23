@@ -74,7 +74,7 @@ INLINE_MAX=120000
 # per-lane time limit in seconds; raise it for large PRs (a 42-file port needed more than 1800)
 LANE_TIMEOUT=${AGENT_REVIEW_TIMEOUT:-1800}
 review_with(){ case "$1" in
-  opus) (cd "$WORK/src" && timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${DROID_BIN:-droid}" exec \
+  opus) (cd "$WORK/src" && env -u GH_TOKEN -u GITHUB_TOKEN timeout -k "$KILL_AFTER" "$LANE_TIMEOUT" "${DROID_BIN:-droid}" exec \
     --auto medium -m claude-opus-5-5 -r high --disable-builtin-skills \
     --only-tools Read,Grep,Glob,Execute --cwd "$WORK/src" "$PROMPT
 Review directly with file reads and read-only git commands; do not invoke skills or subagents." < /dev/null) ;;

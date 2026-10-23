@@ -84,6 +84,7 @@ echo "VERDICT: APPROVE"
 EOF
 cat > "$T/bin/droid" <<'EOF'
 #!/usr/bin/env bash
+[ -z "${GH_TOKEN+x}${GITHUB_TOKEN+x}" ] || { echo "publisher credentials leaked to reviewer"; exit 7; }
 [ "$1 $2 $3 $4 $5 $6 $7 $8" = "exec --auto medium -m claude-opus-5-5 -r high --disable-builtin-skills" ] || { echo "bad model flags"; exit 2; }
 [ "$9 ${10}" = "--only-tools Read,Grep,Glob,Execute" ] || { echo "unsafe tool set"; exit 3; }
 [ "${11} ${12}" = "--cwd $PWD" ] || { echo "wrong review checkout"; exit 4; }
@@ -159,7 +160,7 @@ run "account out of weekly quota rotates to the next account" 0 "pending|success
 run "devin-sol is no longer a lane" 64 "pending|error" AGENT_REVIEWER=devin-sol -- o/r 1 --post
 if grep -q "unknown reviewer lane devin-sol" "$T/log"; then PASS=$((PASS+1)); echo "ok   unknown lane names itself in the log"; else FAIL=$((FAIL+1)); echo "FAIL log lacks the unknown-lane message"; fi
 run "devin-sol fails closed for the writer family it used to accept" 64 "pending|error" AGENT_REVIEWER=devin-sol AGENT_WRITER_FAMILY=cognition -- o/r 1 --post
-run "opus pins model, tools and checkout" 0 "pending|success" AGENT_REVIEWER=opus AGENT_WRITER_FAMILY=openai,zai -- o/r 1 --post
+run "opus pins model, tools and checkout without publisher credentials" 0 "pending|success" AGENT_REVIEWER=opus AGENT_WRITER_FAMILY=openai,zai GH_TOKEN=inert GITHUB_TOKEN=inert -- o/r 1 --post
 case "$(last_desc)" in "opus: approve") PASS=$((PASS+1)); echo "ok   opus verdict has its own identity" ;; *) FAIL=$((FAIL+1)); echo "FAIL opus attribution: $(last_desc)" ;; esac
 run "opus refuses an anthropic writer" 1 "pending|error" AGENT_REVIEWER=opus AGENT_WRITER_FAMILY=anthropic -- o/r 1 --post
 run "opus crash cannot approve even with verdict" 1 "pending|error" AGENT_REVIEWER=opus AGENT_WRITER_FAMILY=openai FAKE_RC=1 -- o/r 1 --post
